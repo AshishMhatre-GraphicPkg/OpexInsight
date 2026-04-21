@@ -2283,6 +2283,9 @@ IF FileSize('$(vInsightQVDPath)') > 0 THEN
       (qvd)
       WHERE Period_Start <> '$(vPeriodStartStr)';
 
+      Concatenate ([InsightRecords_History])
+      LOAD * RESIDENT InsightRecords;
+
 ELSE
     [InsightRecords_History]:
     NoConcatenate
