@@ -1,0 +1,149 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+---
+
+## What This Repo Is
+
+A Qlik Sense load script (`April 20 at 7_39 PM.qvs`) that powers the **Folding Carton Actionable Intelligence Platform** — a weekly automated insight engine. It compares each machine's recent performance against its own **Best Shown Performance (BSP)** benchmark, scores the gap by size and trend urgency, and produces a ranked action list stored as a QVD on SharePoint.
+
+There is no build system, no test runner, and no linter. Changes are made directly to the `.qvs` file and executed by reloading the Qlik Sense app.
+
+---
+
+## Script Architecture — 6 Tabs / Steps
+
+The script is a single `.qvs` file divided into 6 logical tabs (marked with `///$tab Step N`). Execution is linear top to bottom.
+
+### Step 1 — Variables & Config
+- Week boundary variables (`vCurrentWeekStart`, `vLastWeekStart`, `v2WeekStart`, `v13WeekStart`) computed from `Today()` using `WeekStart()` with `vWeekStartDay = 0` (Monday).
+- BSP window: `v2YearStart` = rolling 24 months back from today (not a fixed date).
+- Thresholds: `vBSP_L1_Min=10`, `vBSP_L2_Min=20`, `vBSP_L3_Min=30`, `vMinCoverage=0.5`.
+- Output path `vInsightQVDPath` → SharePoint; fact source `vFactQVD` → QVD library.
+
+### Step 2 — Dimension Tables
+Loads `PlantInformation`, `WcAttributes`, `Department_Lookup` (Excel), `CartonExtraDim`, `MaterialConversions`, reason code tables, all board attribute mapping tables (`BoardType_Map`, `Material_Map`, `BoardTypeGroup_Map`, `BoardCaliper_Map`), and `OrderOp_NumberUp_Map` (Order Operation Key → Number Up, from `model Asset Utilization - OrderOpData.qvd`).
+
+**Critical:** `Plant` is removed from `WcAttributes` in-memory to prevent a circular reference. Plant reaches `InsightRecords` only through fact-table enrichment via `ApplyMap('Plant_Map', ...)`.
+
+**`OrderOp_NumberUp_Map` lifecycle:** Defined in Step 2, used in Step 3 (`JobFact_Raw` LOAD) and again in Step 5 (Sections 40–41 reason die-level raws which re-read from QVD). Not dropped until end of Section 41.
+
+### Step 3 — Fact Table Passes (Sections 8–15)
+
+This is the most complex step. `JobFact_Raw` is loaded once (full binary QVD read, no transforms) then re-read via `RESIDENT` passes:
+
+| Table | Grain | Purpose |
+|---|---|---|
+| `JobFact_Job_BSP_Agg` | Date + WC + Shift + Die | L1 BSP source aggregation |
+| `JobFact_Job_BSP` | Same grain, RunHours > 2 filter | L1 BSP qualifying runs |
+| `JobFact_Job_BSP_L2_Agg` | Date + WC + Shift + Die + **PltMatKey** | L2 BSP source (PltMatKey as true GROUP BY, not Max()) |
+| `JobFact_Job_BSP_L2` | Same + board attributes resolved | L2 BSP qualifying runs |
+| `JobFact_DownReason_BSP` | Date + WC + Shift + Die + PltMatKey + ReasonKey | Downtime reason BSP source |
+| `JobFact_ScrapReason_BSP` | Date + WC + Shift + Die + PltMatKey + ReasonKey | Scrap reason BSP source |
+| `JobFact_Scoring_Agg` | Date + WC + Die + Carton + PltMatKey + Shift + Operator + Order | 13-week trend + current period |
+| `JobFact_Scoring` | Same + board attributes | Final scoring source |
+
+After `JobFact_Scoring` is loaded, `JobFact_Raw` and all remaining mapping tables are dropped — except `OrderOp_NumberUp_Map` which is kept alive for Section 40–41.
+
+**Mapping tables built in Step 3:**
+- `QualifyingRuns_Map` — key: `Date|WC|ShiftCode|Die`, value: 1 — used to filter reason aggs to qualifying runs only.
+- `SchedHours_Map`, `TotalQty_Map` — same key, carry job-level denominators to reason grain.
+
+**`L2_ExtraDim` field:** Derived in `JobFact_Job_BSP_L2` (and all reason BSP tables) from Department. Encodes the department-specific extra dimension used to refine the L2 BSP grain:
+- `Gluer`, `Window` → `Text("Carton Style")` (carton type drives performance on these machines)
+- `Sheetfed Cutting`, `Web Cutting` → `Text(NumberUp)` (number-up layout drives run efficiency)
+- All other departments → `''` (empty string — L2 grain unchanged from prior behaviour)
+
+This single column is appended to all L2 BSP mapping keys, so no extra tables are needed.
+
+### Step 4 — BSP Calculation (Sections 17–28)
+
+12 BSP tables are computed (L1/L2/L3 × Main KPI / Setup KPI / Downtime Reason / Scrap Reason). Each follows the same pattern:
+1. `BSP_X_Raw` — `FRACTILE()` grouped at the appropriate grain
+2. `BSP_X` — filtered to min run count threshold
+3. Raw table dropped
+
+- **Main/Downtime/Scrap KPIs:** `P90` for higher-is-better, `P10` for lower-is-better.
+- **Setup KPIs:** add `MROClass` to all 3 levels (1MR0/2MR0/3MR0 from `WildMatch` on reason key).
+- **L2 Main and L2 Setup BSP** read from `JobFact_Job_BSP_L2` (not `JobFact_Job_BSP`) because L2 requires board attributes which only the L2 source resolves correctly via the PltMatKey GROUP BY.
+
+### Step 5 — BSP Resolution + Scoring (Sections 29–41)
+
+All 12 BSP tables are immediately converted to 36+ mapping tables then dropped — this eliminates all synthetic keys from keeping them as regular tables.
+
+Then:
+- **Section 30–31:** `WeeklyDieKPI` → `WeeklyDieBSP` — 3-level `Coalesce()` fallback per KPI per die per week. `CoveredSchedHours` = SchedHours only for dies where OEE BSP resolved. `WeeklyDieKPI` carries `Department`, `CartonStyle`, `NumberUp` (all Max/Only aggregated at week+die grain); `WeeklyDieBSP` derives `L2_ExtraDim` once and injects it into every L2 mapping lookup key.
+- **Section 32:** `WeeklyMachineBSP` — weighted BSP per machine+week using SchedHours as weights across dies. Only covered dies contribute to numerator and denominator.
+- **Section 33–35:** `WeeklyMachineKPI_Sorted` → streak calculation using `Peek()`. Must be sorted by `Plant + WC + WeekStart ASC` before `Peek()` runs or streaks compute incorrectly.
+- **Section 36–37:** `CurrentPeriod` — 2-week aggregation. `Cur_SchedHours = Sum(Wk_SchedHours)`. `Cur_BSP_CoveragePct = Sum(Wk_CoveredSchedHours) / Sum(Wk_TotalSchedHours)` across both weeks.
+- **Sections 38–41:** Reason denominator maps and current-period reason aggs (die grain → machine+reason grain with weighted BSP fallback). Section 38 also builds `Department_Rsn_Map` (WC → Department). Sections 40–41 re-read `vFactQVD` for the 2-week window and carry `CartonStyle` (via `Only()`) and `NumberUp` (via `Max(ApplyMap('OrderOp_NumberUp_Map', ...))`), then apply `Department_Rsn_Map` to derive the L2_ExtraDim string inline in each L2 Coalesce key.
+
+### Step 6 — Insight Records, Scoring, Store (Sections 42–48)
+
+- **Section 42:** `InsightRecords_Raw` — 9 `LOAD` blocks (one per KPI: OEE, Availability, Performance, Quality, Speed, Downtime %, Scrap Rate, Setup Hrs/Event, Setup Time %) with `Concatenate`. Insight fires when `Cur_Actual` is worse than `BSP_Benchmark` **AND** `Cur_BSP_CoveragePct > 0.5` (strict greater-than). Each block also produces `Cur_Actual_Fmt` and `BSP_Benchmark_Fmt` as Qlik dual values using `Num()` — percentage KPIs (0-1 fractions) use `'0.00%'`, Speed uses `'#,##0.00'`, Setup Hrs/Event uses `'0.00'`.
+- **Section 43:** `Composite_Score = Gap_Score × 0.70 + Trend_Score × 0.30`. Also computes `OEE_Impact = Round(Gap_Pct / 100 * Cur_SchedHours, 0.01)` — the equivalent scheduled hours lost due to the KPI gap. Must be computed here because `Cur_SchedHours` is excluded from the Section 45 explicit field list.
+- **Section 44:** Reason insights — downtime weighted by `TotalSchedHrs_2wk`, scrap weighted by `TotalQty_2wk`. `Impact_Score = (Cur% - BSP%) × TotalHrs` (converts % gap to actual hours/units). `Cur_Actual_Fmt` and `BSP_Benchmark_Fmt` added here as `'0.00%'` duals (the conditional expression is repeated verbatim — aliases are not referenceable within the same LOAD block in Qlik).
+- **Sections 45–47:** Sort, rank (`Peek()` counter), combine main + reason into `InsightRecords`. Main rows carry `OEE_Impact`, `Cur_Actual_Fmt`, `BSP_Benchmark_Fmt`; reason rows carry `Null() as OEE_Impact` (they use `Impact_Score` instead) plus the two fmt fields.
+- **Section 48:** Incremental store — load history QVD excluding `Period_Start = vPeriodStartStr`, `Concatenate` new records, store back. If QVD does not yet exist, store only current records. Historical rows pre-dating this change will show NULL for `OEE_Impact`, `Cur_Actual_Fmt`, `BSP_Benchmark_Fmt` — expected and safe.
+
+---
+
+## Key Design Decisions to Preserve
+
+| Decision | Why it matters |
+|---|---|
+| Raw QVD load first, then RESIDENT passes | QVD binary read is only optimized with zero transforms. Any `If()`, `ApplyMap()`, or `Sum()` in the FROM clause triggers unoptimized (slow) mode. |
+| All BSP tables → mapping tables immediately | 12 BSP tables sharing Plant + WC create cascading synthetic keys. Converting to mappings and dropping source tables eliminates all synthetic keys. |
+| L2 BSP from separate `JobFact_Job_BSP_L2` | L1 source has no PltMatKey (Die is the product dimension). L2 needs board attributes which require PltMatKey as a true GROUP BY dimension — `Max(PltMatKey)` produces wrong grouping. |
+| Department-specific L2 grain via `L2_ExtraDim` | A single derived column collapses three grain variants (empty / CartonStyle / NumberUp) into one field, avoiding three parallel L2 pipelines. All 12 L2 BSP tables and their mapping keys include this field — empty string for default departments means existing behaviour is preserved for Web/Sheetfed Printing/Other with no separate code path. |
+| `Only()` for string fields in aggregations, `Max()` for numerics | `Max()` on a text field in Qlik returns NULL. `Only()` returns the value if the group contains exactly one distinct value (else NULL, which acts as a data-quality signal). Used for `CartonStyle` everywhere it is aggregated. `NumberUp` is numeric so `Max()` is correct. |
+| `Cur_BSP_CoveragePct` spans both weeks | Was previously only last week's coverage. Must use `Sum(CoveredSchedHours) / Sum(TotalSchedHours)` across the 2-week window. |
+| Coverage threshold is strict `> 0.5` | Not `>= 0.5`. Exactly 50% coverage does not pass. |
+| `Cur_SchedHours = Sum(Wk_SchedHours)` | Represents total hours over 2 weeks. `Avg` was incorrect. |
+| Reason BSPs use L1→L2→L3 fallback | Same 3-level `Coalesce()` pattern as main KPIs, applied at die grain before rolling up to machine+reason level. |
+| Streak sorted before `Peek()` | `WeeklyMachineKPI_Sorted` ORDER BY `Plant, WC Object ID, WeekStart ASC` is mandatory for `Peek()` streak logic. |
+| `Insight_ID` is stable across reruns | Format: `Plant|WCObjectID|PeriodStart|KPIName`. Incremental store deduplicates on `Period_Start` so reruns in same week overwrite, not duplicate. |
+
+---
+
+## fSched Filtering Rules
+
+Applied inline on every aggregation — never pre-filtered:
+- **Time metrics** (RunHours, DownHours, SetupHours, SetupDownHours, NonCrewedHours): `If(IsNull(fSched), 2, fSched) <= 1`
+- **Qty metrics** (Yield/Scrap in OEE UOM and BUOM): `If(IsNull(fSched), 2, fSched) >= 1`
+- Null fSched rows are treated as 2 (qty-only rows).
+
+## KPI Direction Reference
+
+| Higher-is-better (P90 BSP, fires when Actual < BSP) | Lower-is-better (P10 BSP, fires when Actual > BSP) |
+|---|---|
+| OEE, Availability, Performance, Quality, Speed | Downtime %, Scrap Rate, Setup Hrs/Event, Setup Time % |
+
+## MaxSpeed Logic
+
+`MaxSpeed` = `Max Gluer Cartons Per Hour` for Department = `Gluer` or `Window`; `OEM Speed` for all others. Applied via `ApplyMap('Department_Map', ...)` at the enrichment pass, not at the raw load.
+
+## Mapping Table Key Formats (Step 5)
+
+```
+L1 Main/Downtime BSP   : Plant|WCObjectID|Die
+L2 Main/Downtime BSP   : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|L2_ExtraDim
+L3 Main/Downtime BSP   : Plant|WCObjectID
+L1 Setup BSP           : Plant|WCObjectID|Die|MROClass
+L2 Setup BSP           : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|L2_ExtraDim|MROClass
+L3 Setup BSP           : Plant|WCObjectID|MROClass
+L1 Downtime Reason BSP : Plant|WCObjectID|Die|TimeReasonKey
+L2 Downtime Reason BSP : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|L2_ExtraDim|TimeReasonKey
+L3 Downtime Reason BSP : Plant|WCObjectID|TimeReasonKey
+(Scrap Reason same pattern with ScrapReasonKey)
+QualifyingRuns_Map     : Date|WCObjectID|ShiftCode|Die
+```
+
+**`L2_ExtraDim` values by department:**
+```
+Gluer, Window           → Text(CartonStyle)   e.g. "TUCK-END-AUTO"
+Sheetfed Cutting,
+Web Cutting             → Text(NumberUp)      e.g. "4"
+All other departments   → ''                  (empty — same L2 key as before)
+```
