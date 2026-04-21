@@ -161,6 +161,14 @@ MAPPING LOAD
     Department
 RESIDENT WcAttributes;
 
+// Built here while Department still exists in WcAttributes (before DROP FIELD below).
+// Used in Step 5 Sections 40–41 for reason L2_ExtraDim derivation. Dropped at end of Section 41.
+Department_Rsn_Map:
+MAPPING LOAD
+    "WC Object ID",
+    Department
+RESIDENT WcAttributes;
+
 DROP FIELD Department FROM WcAttributes;
 
 BoardType_Map:
@@ -1789,13 +1797,6 @@ Plant_Reason_Map:
 MAPPING LOAD
     "WC Object ID",
     Plant
-FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - WcAttributes.qvd]
-(qvd);
-
-Department_Rsn_Map:
-MAPPING LOAD
-    "WC Object ID",
-    Department
 FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - WcAttributes.qvd]
 (qvd);
 
