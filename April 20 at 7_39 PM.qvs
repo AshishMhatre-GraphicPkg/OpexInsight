@@ -227,6 +227,20 @@ FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined 
 (ooxml, embedded labels, table is carton_style_lookup);
 
 
+// ============================================================
+// SECTION 7: ORDER OPERATION — NUMBER UP MAPPING
+// Feeds L2 BSP grain for Sheetfed Cutting / Web Cutting depts
+// ============================================================
+
+OrderOp_NumberUp_Map:
+MAPPING LOAD
+    "Order Operation Key",
+    "Number Up"
+FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - OrderOpData.qvd]
+(qvd)
+WHERE Not IsNull("Order Operation Key");
+
+
 ///$tab Step 3
 // ============================================================
 // SECTION 8: FACT TABLE — PASS 1 — RAW OPTIMIZED QVD LOAD
@@ -245,6 +259,8 @@ LOAD
     "Operator ID",
     "Order",
     "Factory Order",
+    "Order Operation Key",
+    ApplyMap('OrderOp_NumberUp_Map', "Order Operation Key", Null())                            as NumberUp,
     "Carton Style",
     fSched,
     "Time Plant Reason Key",
@@ -397,6 +413,8 @@ LOAD
     Die,
     "Shift Code",
     "Plant Material Key"                                                                        as PltMatKey,
+    Only("Carton Style")                                                                        as CartonStyle,
+    Max(NumberUp)                                                                               as NumberUp,
     Max(If(WildMatch("Time Plant Reason Key", '*1MR0*'), 1,
         If(WildMatch("Time Plant Reason Key", '*2MR0*'), 2,
             If(WildMatch("Time Plant Reason Key", '*3MR0*'), 3,
@@ -429,6 +447,8 @@ LOAD
     "WC Object ID",
     Die,
     MROClass,
+    CartonStyle,
+    NumberUp,
     RunHours,
     DownHours,
     SetupHours,
@@ -439,6 +459,11 @@ LOAD
     RunHours + DownHours + SetupHours + SetupDownHours + NonCrewedHours                         as SchedHours,
     ApplyMap('Plant_Map',      "WC Object ID", 'Unknown')                                       as Plant,
     ApplyMap('Department_Map', "WC Object ID", 'Unknown')                                       as Department,
+    If(Match(ApplyMap('Department_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
+            Text(CartonStyle),
+        If(Match(ApplyMap('Department_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
+            Text(NumberUp),
+           ''))                                                                                 as L2_ExtraDim,
     (RunHours + DownHours + SetupHours + SetupDownHours + NonCrewedHours) *
         If(ApplyMap('Department_Map', "WC Object ID", '') = 'Gluer'
             OR ApplyMap('Department_Map', "WC Object ID", '') = 'Window',
@@ -470,6 +495,8 @@ LOAD
     Die,
     "Shift Code",
     "Plant Material Key"                                                                        as PltMatKey,
+    Only("Carton Style")                                                                        as CartonStyle,
+    Max(NumberUp)                                                                               as NumberUp,
     "Time Plant Reason Key",
     Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                              as ReasonDownHours
 RESIDENT JobFact_Raw
@@ -494,12 +521,19 @@ LOAD
     "WC Object ID",
     Die,
     PltMatKey,
+    CartonStyle,
+    NumberUp,
     "Time Plant Reason Key",
     ReasonDownHours,
     ApplyMap('SchedHours_Map',
         Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die, Null())                  as SchedHours,
     ApplyMap('Plant_Map',      "WC Object ID", 'Unknown')                                       as Plant,
     ApplyMap('Department_Map', "WC Object ID", 'Unknown')                                       as Department,
+    If(Match(ApplyMap('Department_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
+            Text(CartonStyle),
+        If(Match(ApplyMap('Department_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
+            Text(NumberUp),
+           ''))                                                                                 as L2_ExtraDim,
     ApplyMap('BoardTypeGroup_Map', ApplyMap('BoardType_Map', PltMatKey, Null()), Null())         as "Board Type Group",
     ApplyMap('BoardCaliper_Map',   ApplyMap('Material_Map',  PltMatKey, Null()), Null())         as "Board Caliper"
 RESIDENT JobFact_DownReason_BSP_Agg;
@@ -522,6 +556,8 @@ LOAD
     Die,
     "Shift Code",
     "Plant Material Key"                                                                        as PltMatKey,
+    Only("Carton Style")                                                                        as CartonStyle,
+    Max(NumberUp)                                                                               as NumberUp,
     "Scrap Plant Reason Key",
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM", 0))                         as ReasonScrapQty
 RESIDENT JobFact_Raw
@@ -545,12 +581,19 @@ LOAD
     "WC Object ID",
     Die,
     PltMatKey,
+    CartonStyle,
+    NumberUp,
     "Scrap Plant Reason Key",
     ReasonScrapQty,
     ApplyMap('TotalQty_Map',
         Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die, Null())                  as TotalQty_OEE,
     ApplyMap('Plant_Map',      "WC Object ID", 'Unknown')                                       as Plant,
     ApplyMap('Department_Map', "WC Object ID", 'Unknown')                                       as Department,
+    If(Match(ApplyMap('Department_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
+            Text(CartonStyle),
+        If(Match(ApplyMap('Department_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
+            Text(NumberUp),
+           ''))                                                                                 as L2_ExtraDim,
     ApplyMap('BoardTypeGroup_Map', ApplyMap('BoardType_Map', PltMatKey, Null()), Null())         as "Board Type Group",
     ApplyMap('BoardCaliper_Map',   ApplyMap('Material_Map',  PltMatKey, Null()), Null())         as "Board Caliper"
 RESIDENT JobFact_ScrapReason_BSP_Agg;
@@ -581,6 +624,7 @@ LOAD
     "Operator ID",
     "Order",
     "Factory Order",
+    Max(NumberUp)                                                                               as NumberUp,
     Max(If(WildMatch("Time Plant Reason Key", '*1MR0*'), 1,
         If(WildMatch("Time Plant Reason Key", '*2MR0*'), 2,
             If(WildMatch("Time Plant Reason Key", '*3MR0*'), 3,
@@ -632,6 +676,7 @@ LOAD
     "Operator ID",
     "Order",
     "Factory Order",
+    NumberUp,
     MROClass,
     RunHours,
     DownHours,
@@ -672,6 +717,8 @@ DROP MAPPING TABLE BoardType_Map;
 DROP MAPPING TABLE Material_Map;
 DROP MAPPING TABLE BoardTypeGroup_Map;
 DROP MAPPING TABLE BoardCaliper_Map;
+// OrderOp_NumberUp_Map kept alive — still needed for reason die-level
+// aggregations in Sections 40–41. Dropped at end of Section 41.
 ///$tab Step 4
 // ============================================================
 // SECTION 17: MAIN KPI BSP — LEVEL 1
@@ -719,6 +766,7 @@ LOAD
     "WC Object ID",
     "Board Type Group",
     "Board Caliper",
+    L2_ExtraDim,
     Count(1)                                                                                    as L2_RunCount,
     FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.9)                  as L2_BSP_OEE,
     FRACTILE(If(SchedHours   > 0, RunHours      / SchedHours,   Null()), 0.9)                  as L2_BSP_Availability,
@@ -730,7 +778,7 @@ LOAD
     FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.1)                  as L2_BSP_ScrapRate
 RESIDENT JobFact_Job_BSP_L2
 WHERE Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
-GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper";
+GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim;
 
 BSP_Main_L2:
 NoConcatenate
@@ -809,6 +857,7 @@ LOAD
     "WC Object ID",
     "Board Type Group",
     "Board Caliper",
+    L2_ExtraDim,
     MROClass,
     Count(1)                                                                                    as L2_SetupRunCount,
     FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.1)                      as L2_BSP_SetupHrsPerEvent,
@@ -818,7 +867,7 @@ WHERE SetupCount > 0
     AND Not IsNull(MROClass)
     AND Not IsNull("Board Type Group")
     AND Not IsNull("Board Caliper")
-GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", MROClass;
+GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim, MROClass;
 
 BSP_Setup_L2:
 NoConcatenate
@@ -895,12 +944,13 @@ LOAD
     "WC Object ID",
     "Board Type Group",
     "Board Caliper",
+    L2_ExtraDim,
     "Time Plant Reason Key",
     Count(1)                                                                                    as L2_DwnRsnCount,
     FRACTILE(If(SchedHours   > 0, ReasonDownHours / SchedHours, Null()), 0.1)                  as L2_BSP_ReasonDownPct
 RESIDENT JobFact_DownReason_BSP
 WHERE Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
-GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", "Time Plant Reason Key";
+GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim, "Time Plant Reason Key";
 
 BSP_DownReason_L2:
 NoConcatenate
@@ -974,12 +1024,13 @@ LOAD
     "WC Object ID",
     "Board Type Group",
     "Board Caliper",
+    L2_ExtraDim,
     "Scrap Plant Reason Key",
     Count(1)                                                                                    as L2_ScrRsnCount,
     FRACTILE(If(TotalQty_OEE > 0, ReasonScrapQty / TotalQty_OEE, Null()), 0.1)                as L2_BSP_ReasonScrapPct
 RESIDENT JobFact_ScrapReason_BSP
 WHERE Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
-GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", "Scrap Plant Reason Key";
+GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim, "Scrap Plant Reason Key";
 
 BSP_ScrapReason_L2:
 NoConcatenate
@@ -1066,35 +1117,35 @@ RESIDENT BSP_Main_L1;
 DROP TABLE BSP_Main_L1;
 
 BSP_L2_OEE_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], L2_BSP_OEE
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_OEE
 RESIDENT BSP_Main_L2;
 
 BSP_L2_Avail_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], L2_BSP_Availability
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_Availability
 RESIDENT BSP_Main_L2;
 
 BSP_L2_Perf_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], L2_BSP_Performance
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_Performance
 RESIDENT BSP_Main_L2;
 
 BSP_L2_Qual_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], L2_BSP_Quality
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_Quality
 RESIDENT BSP_Main_L2;
 
 BSP_L2_Speed_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], L2_BSP_Speed
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_Speed
 RESIDENT BSP_Main_L2;
 
 BSP_L2_DTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], L2_BSP_DowntimePct
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_DowntimePct
 RESIDENT BSP_Main_L2;
 
 BSP_L2_DTHrs_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], L2_BSP_DowntimeHrs
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_DowntimeHrs
 RESIDENT BSP_Main_L2;
 
 BSP_L2_ScrapRate_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], L2_BSP_ScrapRate
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_ScrapRate
 RESIDENT BSP_Main_L2;
 
 DROP TABLE BSP_Main_L2;
@@ -1144,11 +1195,11 @@ RESIDENT BSP_Setup_L1;
 DROP TABLE BSP_Setup_L1;
 
 BSP_L2_SetupHrsEv_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & MROClass, L2_BSP_SetupHrsPerEvent
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim & '|' & MROClass, L2_BSP_SetupHrsPerEvent
 RESIDENT BSP_Setup_L2;
 
 BSP_L2_SetupPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & MROClass, L2_BSP_SetupTimePct
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim & '|' & MROClass, L2_BSP_SetupTimePct
 RESIDENT BSP_Setup_L2;
 
 DROP TABLE BSP_Setup_L2;
@@ -1170,7 +1221,7 @@ RESIDENT BSP_DownReason_L1;
 DROP TABLE BSP_DownReason_L1;
 
 BSP_L2_DwnRsn_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & [Time Plant Reason Key], L2_BSP_ReasonDownPct
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim & '|' & [Time Plant Reason Key], L2_BSP_ReasonDownPct
 RESIDENT BSP_DownReason_L2;
 
 DROP TABLE BSP_DownReason_L2;
@@ -1188,7 +1239,7 @@ RESIDENT BSP_ScrapReason_L1;
 DROP TABLE BSP_ScrapReason_L1;
 
 BSP_L2_ScrRsn_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & [Scrap Plant Reason Key], L2_BSP_ReasonScrapPct
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim & '|' & [Scrap Plant Reason Key], L2_BSP_ReasonScrapPct
 RESIDENT BSP_ScrapReason_L2;
 
 DROP TABLE BSP_ScrapReason_L2;
@@ -1213,6 +1264,9 @@ LOAD
     Plant,
     "WC Object ID",
     Die,
+    Only(Department)                                                                            as Department,
+    Only("Carton Style")                                                                        as CartonStyle,
+    Max(NumberUp)                                                                               as NumberUp,
     Max("Board Type Group")                                                                     as "Board Type Group",
     Max("Board Caliper")                                                                        as "Board Caliper",
     Max(MROClass)                                                                               as MROClass,
@@ -1246,6 +1300,9 @@ LOAD
     Plant,
     "WC Object ID",
     Die,
+    Department,
+    CartonStyle,
+    NumberUp,
     "Board Type Group",
     "Board Caliper",
     MROClass,
@@ -1260,67 +1317,95 @@ LOAD
     Wk_Die_SetupHours,
     Wk_Die_SetupCount,
 
+    If(Match(Department, 'Gluer', 'Window'),                    Text(CartonStyle),
+        If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp),
+           ''))                                                                                  as L2_ExtraDim,
+
     Coalesce(
         ApplyMap('BSP_L1_OEE_Map',      Plant & '|' & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_OEE_Map',      Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], Null()),
+        ApplyMap('BSP_L2_OEE_Map',      Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
         ApplyMap('BSP_L3_OEE_Map',      Plant & '|' & [WC Object ID], Null()))                  as Die_BSP_OEE,
 
     Coalesce(
         ApplyMap('BSP_L1_Avail_Map',    Plant & '|' & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_Avail_Map',    Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], Null()),
+        ApplyMap('BSP_L2_Avail_Map',    Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
         ApplyMap('BSP_L3_Avail_Map',    Plant & '|' & [WC Object ID], Null()))                  as Die_BSP_Availability,
 
     Coalesce(
         ApplyMap('BSP_L1_Perf_Map',     Plant & '|' & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_Perf_Map',     Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], Null()),
+        ApplyMap('BSP_L2_Perf_Map',     Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
         ApplyMap('BSP_L3_Perf_Map',     Plant & '|' & [WC Object ID], Null()))                  as Die_BSP_Performance,
 
     Coalesce(
         ApplyMap('BSP_L1_Qual_Map',     Plant & '|' & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_Qual_Map',     Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], Null()),
+        ApplyMap('BSP_L2_Qual_Map',     Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
         ApplyMap('BSP_L3_Qual_Map',     Plant & '|' & [WC Object ID], Null()))                  as Die_BSP_Quality,
 
     Coalesce(
         ApplyMap('BSP_L1_Speed_Map',    Plant & '|' & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_Speed_Map',    Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], Null()),
+        ApplyMap('BSP_L2_Speed_Map',    Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
         ApplyMap('BSP_L3_Speed_Map',    Plant & '|' & [WC Object ID], Null()))                  as Die_BSP_Speed,
 
     Coalesce(
         ApplyMap('BSP_L1_DTPct_Map',    Plant & '|' & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_DTPct_Map',    Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], Null()),
+        ApplyMap('BSP_L2_DTPct_Map',    Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
         ApplyMap('BSP_L3_DTPct_Map',    Plant & '|' & [WC Object ID], Null()))                  as Die_BSP_DowntimePct,
 
     Coalesce(
         ApplyMap('BSP_L1_DTHrs_Map',    Plant & '|' & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_DTHrs_Map',    Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], Null()),
+        ApplyMap('BSP_L2_DTHrs_Map',    Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
         ApplyMap('BSP_L3_DTHrs_Map',    Plant & '|' & [WC Object ID], Null()))                  as Die_BSP_DowntimeHrs,
 
     Coalesce(
         ApplyMap('BSP_L1_ScrapRate_Map',Plant & '|' & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_ScrapRate_Map',Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], Null()),
+        ApplyMap('BSP_L2_ScrapRate_Map',Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
         ApplyMap('BSP_L3_ScrapRate_Map',Plant & '|' & [WC Object ID], Null()))                  as Die_BSP_ScrapRate,
 
     Coalesce(
         ApplyMap('BSP_L1_SetupHrsEv_Map',Plant & '|' & [WC Object ID] & '|' & Die & '|' & MROClass, Null()),
-        ApplyMap('BSP_L2_SetupHrsEv_Map',Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & MROClass, Null()),
+        ApplyMap('BSP_L2_SetupHrsEv_Map',Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')) & '|' & MROClass, Null()),
         ApplyMap('BSP_L3_SetupHrsEv_Map',Plant & '|' & [WC Object ID] & '|' & MROClass, Null())) as Die_BSP_SetupHrsPerEvent,
 
     Coalesce(
         ApplyMap('BSP_L1_SetupPct_Map', Plant & '|' & [WC Object ID] & '|' & Die & '|' & MROClass, Null()),
-        ApplyMap('BSP_L2_SetupPct_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & MROClass, Null()),
+        ApplyMap('BSP_L2_SetupPct_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')) & '|' & MROClass, Null()),
         ApplyMap('BSP_L3_SetupPct_Map', Plant & '|' & [WC Object ID] & '|' & MROClass, Null()))  as Die_BSP_SetupTimePct,
 
     // Confidence level for OEE used as proxy for all main KPIs
     // 3 = HIGH (L1 resolved), 2 = MEDIUM (L2), 1 = LOW (L3), 0 = NONE
     If(Not IsNull(ApplyMap('BSP_L1_OEE_Map', Plant & '|' & [WC Object ID] & '|' & Die, Null())), 3,
-        If(Not IsNull(ApplyMap('BSP_L2_OEE_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], Null())), 2,
+        If(Not IsNull(ApplyMap('BSP_L2_OEE_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null())), 2,
             If(Not IsNull(ApplyMap('BSP_L3_OEE_Map', Plant & '|' & [WC Object ID], Null())), 1,
                 0)))                                                                             as Die_BSP_ConfScore,
 
     // SchedHours counted only for dies where OEE BSP was resolved
     If(Not IsNull(Coalesce(
         ApplyMap('BSP_L1_OEE_Map', Plant & '|' & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_OEE_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper], Null()),
+        ApplyMap('BSP_L2_OEE_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
         ApplyMap('BSP_L3_OEE_Map', Plant & '|' & [WC Object ID], Null()))),
         Wk_Die_SchedHours, 0)                                                                   as CoveredSchedHours
 RESIDENT WeeklyDieKPI;
@@ -1707,6 +1792,13 @@ MAPPING LOAD
 FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - WcAttributes.qvd]
 (qvd);
 
+Department_Rsn_Map:
+MAPPING LOAD
+    "WC Object ID",
+    Department
+FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - WcAttributes.qvd]
+(qvd);
+
 // Rebuild board attribute mapping tables — dropped at end of Step 3, needed
 // here for L1 (Die) and L2 (Board Type Group + Board Caliper) reason BSP keys
 [PlantMaterial_Rsn]:
@@ -1838,6 +1930,8 @@ LOAD
     Die,
     "Plant Material Key"                                                    as PltMatKey,
     "Time Plant Reason Key",
+    Only("Carton Style")                                                    as CartonStyle,
+    Max(ApplyMap('OrderOp_NumberUp_Map', "Order Operation Key", Null()))    as NumberUp,
     Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))          as Cur_ReasonDownHours
 FROM [$(vFactQVD)]
 (qvd)
@@ -1865,6 +1959,11 @@ LOAD
             & [WC Object ID] & '|'
             & ApplyMap('BoardTypeGroup_Rsn_Map', ApplyMap('BoardType_Rsn_Map', PltMatKey, Null()), Null()) & '|'
             & ApplyMap('BoardCaliper_Rsn_Map',   ApplyMap('Material_Rsn_Map',  PltMatKey, Null()), Null()) & '|'
+            & If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
+                    Text(CartonStyle),
+                If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
+                    Text(NumberUp),
+                   '')) & '|'
             & [Time Plant Reason Key], Null()),
         ApplyMap('BSP_L3_DwnRsn_Map',
             ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
@@ -1912,6 +2011,8 @@ LOAD
     Die,
     "Plant Material Key"                                                    as PltMatKey,
     "Scrap Plant Reason Key",
+    Only("Carton Style")                                                    as CartonStyle,
+    Max(ApplyMap('OrderOp_NumberUp_Map', "Order Operation Key", Null()))    as NumberUp,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM", 0))    as Cur_ReasonScrapQty
 FROM [$(vFactQVD)]
 (qvd)
@@ -1938,6 +2039,11 @@ LOAD
             & [WC Object ID] & '|'
             & ApplyMap('BoardTypeGroup_Rsn_Map', ApplyMap('BoardType_Rsn_Map', PltMatKey, Null()), Null()) & '|'
             & ApplyMap('BoardCaliper_Rsn_Map',   ApplyMap('Material_Rsn_Map',  PltMatKey, Null()), Null()) & '|'
+            & If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
+                    Text(CartonStyle),
+                If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
+                    Text(NumberUp),
+                   '')) & '|'
             & [Scrap Plant Reason Key], Null()),
         ApplyMap('BSP_L3_ScrRsn_Map',
             ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
@@ -1967,6 +2073,8 @@ DROP MAPPING TABLE BSP_L1_ScrRsn_Map;
 DROP MAPPING TABLE BSP_L2_ScrRsn_Map;
 DROP MAPPING TABLE BSP_L3_ScrRsn_Map;
 DROP MAPPING TABLE Plant_Reason_Map;
+DROP MAPPING TABLE Department_Rsn_Map;
+DROP MAPPING TABLE OrderOp_NumberUp_Map;
 DROP MAPPING TABLE TotalSchedHrs_Rsn_Map;
 DROP MAPPING TABLE TotalQty_Rsn_Map;
 DROP MAPPING TABLE DieSchedHrs_Rsn_Map;
@@ -1998,6 +2106,8 @@ LOAD
     'OEE'                                                                                       as KPI_Name,
     Cur_OEE                                                                                     as Cur_Actual,
     Cur_BSP_OEE                                                                                 as BSP_Benchmark,
+    Num(Cur_OEE,         '0.00%')                                                               as Cur_Actual_Fmt,
+    Num(Cur_BSP_OEE,     '0.00%')                                                               as BSP_Benchmark_Fmt,
     RangeMin(100, (Cur_BSP_OEE - Cur_OEE) / Cur_BSP_OEE * 100)                                 as Gap_Pct,
     RangeMin(100, (Cur_BSP_OEE - Cur_OEE) / Cur_BSP_OEE * 100)                                 as Gap_Score,
     RangeMin(If(IsNull(Streak_OEE), 0, Streak_OEE), 4)                                         as Streak_4wk,
@@ -2026,6 +2136,8 @@ LOAD
     'Availability'                                                                              as KPI_Name,
     Cur_Availability                                                                            as Cur_Actual,
     Cur_BSP_Availability                                                                        as BSP_Benchmark,
+    Num(Cur_Availability,     '0.00%')                                                          as Cur_Actual_Fmt,
+    Num(Cur_BSP_Availability, '0.00%')                                                          as BSP_Benchmark_Fmt,
     RangeMin(100, (Cur_BSP_Availability - Cur_Availability) / Cur_BSP_Availability * 100)       as Gap_Pct,
     RangeMin(100, (Cur_BSP_Availability - Cur_Availability) / Cur_BSP_Availability * 100)       as Gap_Score,
     RangeMin(If(IsNull(Streak_Availability), 0, Streak_Availability), 4)                       as Streak_4wk,
@@ -2054,6 +2166,8 @@ LOAD
     'Performance'                                                                               as KPI_Name,
     Cur_Performance                                                                             as Cur_Actual,
     Cur_BSP_Performance                                                                         as BSP_Benchmark,
+    Num(Cur_Performance,     '0.00%')                                                           as Cur_Actual_Fmt,
+    Num(Cur_BSP_Performance, '0.00%')                                                           as BSP_Benchmark_Fmt,
     RangeMin(100, (Cur_BSP_Performance - Cur_Performance) / Cur_BSP_Performance * 100)          as Gap_Pct,
     RangeMin(100, (Cur_BSP_Performance - Cur_Performance) / Cur_BSP_Performance * 100)          as Gap_Score,
     RangeMin(If(IsNull(Streak_Performance), 0, Streak_Performance), 4)                         as Streak_4wk,
@@ -2082,6 +2196,8 @@ LOAD
     'Quality'                                                                                   as KPI_Name,
     Cur_Quality                                                                                 as Cur_Actual,
     Cur_BSP_Quality                                                                             as BSP_Benchmark,
+    Num(Cur_Quality,     '0.00%')                                                               as Cur_Actual_Fmt,
+    Num(Cur_BSP_Quality, '0.00%')                                                               as BSP_Benchmark_Fmt,
     RangeMin(100, (Cur_BSP_Quality - Cur_Quality) / Cur_BSP_Quality * 100)                      as Gap_Pct,
     RangeMin(100, (Cur_BSP_Quality - Cur_Quality) / Cur_BSP_Quality * 100)                      as Gap_Score,
     RangeMin(If(IsNull(Streak_Quality), 0, Streak_Quality), 4)                                 as Streak_4wk,
@@ -2110,6 +2226,8 @@ LOAD
     'Speed'                                                                                     as KPI_Name,
     Cur_Speed                                                                                   as Cur_Actual,
     Cur_BSP_Speed                                                                               as BSP_Benchmark,
+    Num(Cur_Speed,     '#,##0.00')                                                              as Cur_Actual_Fmt,
+    Num(Cur_BSP_Speed, '#,##0.00')                                                              as BSP_Benchmark_Fmt,
     RangeMin(100, (Cur_BSP_Speed - Cur_Speed) / Cur_BSP_Speed * 100)                            as Gap_Pct,
     RangeMin(100, (Cur_BSP_Speed - Cur_Speed) / Cur_BSP_Speed * 100)                            as Gap_Score,
     RangeMin(If(IsNull(Streak_Speed), 0, Streak_Speed), 4)                                     as Streak_4wk,
@@ -2138,6 +2256,8 @@ LOAD
     'Downtime %'                                                                                as KPI_Name,
     Cur_DowntimePct                                                                             as Cur_Actual,
     Cur_BSP_DowntimePct                                                                         as BSP_Benchmark,
+    Num(Cur_DowntimePct,     '0.00%')                                                           as Cur_Actual_Fmt,
+    Num(Cur_BSP_DowntimePct, '0.00%')                                                           as BSP_Benchmark_Fmt,
     RangeMin(100, (Cur_DowntimePct - Cur_BSP_DowntimePct) / Cur_BSP_DowntimePct * 100)          as Gap_Pct,
     RangeMin(100, (Cur_DowntimePct - Cur_BSP_DowntimePct) / Cur_BSP_DowntimePct * 100)          as Gap_Score,
     RangeMin(If(IsNull(Streak_DowntimePct), 0, Streak_DowntimePct), 4)                         as Streak_4wk,
@@ -2166,6 +2286,8 @@ LOAD
     'Scrap Rate'                                                                                as KPI_Name,
     Cur_ScrapRate                                                                               as Cur_Actual,
     Cur_BSP_ScrapRate                                                                           as BSP_Benchmark,
+    Num(Cur_ScrapRate,     '0.00%')                                                             as Cur_Actual_Fmt,
+    Num(Cur_BSP_ScrapRate, '0.00%')                                                             as BSP_Benchmark_Fmt,
     RangeMin(100, (Cur_ScrapRate - Cur_BSP_ScrapRate) / Cur_BSP_ScrapRate * 100)                as Gap_Pct,
     RangeMin(100, (Cur_ScrapRate - Cur_BSP_ScrapRate) / Cur_BSP_ScrapRate * 100)                as Gap_Score,
     RangeMin(If(IsNull(Streak_ScrapRate), 0, Streak_ScrapRate), 4)                             as Streak_4wk,
@@ -2194,6 +2316,8 @@ LOAD
     'Setup Hrs/Event'                                                                           as KPI_Name,
     Cur_SetupHrsPerEvent                                                                        as Cur_Actual,
     Cur_BSP_SetupHrsPerEvent                                                                    as BSP_Benchmark,
+    Num(Cur_SetupHrsPerEvent,     '0.00')                                                       as Cur_Actual_Fmt,
+    Num(Cur_BSP_SetupHrsPerEvent, '0.00')                                                       as BSP_Benchmark_Fmt,
     RangeMin(100, (Cur_SetupHrsPerEvent - Cur_BSP_SetupHrsPerEvent) / Cur_BSP_SetupHrsPerEvent * 100) as Gap_Pct,
     RangeMin(100, (Cur_SetupHrsPerEvent - Cur_BSP_SetupHrsPerEvent) / Cur_BSP_SetupHrsPerEvent * 100) as Gap_Score,
     RangeMin(If(IsNull(Streak_SetupHrsPerEvent), 0, Streak_SetupHrsPerEvent), 4)               as Streak_4wk,
@@ -2222,6 +2346,8 @@ LOAD
     'Setup Time %'                                                                              as KPI_Name,
     Cur_SetupTimePct                                                                            as Cur_Actual,
     Cur_BSP_SetupTimePct                                                                        as BSP_Benchmark,
+    Num(Cur_SetupTimePct,     '0.00%')                                                          as Cur_Actual_Fmt,
+    Num(Cur_BSP_SetupTimePct, '0.00%')                                                          as BSP_Benchmark_Fmt,
     RangeMin(100, (Cur_SetupTimePct - Cur_BSP_SetupTimePct) / Cur_BSP_SetupTimePct * 100)       as Gap_Pct,
     RangeMin(100, (Cur_SetupTimePct - Cur_BSP_SetupTimePct) / Cur_BSP_SetupTimePct * 100)       as Gap_Score,
     RangeMin(If(IsNull(Streak_SetupTimePct), 0, Streak_SetupTimePct), 4)                       as Streak_4wk,
@@ -2268,6 +2394,9 @@ LOAD
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
     BSP_Confidence,
+    Cur_Actual_Fmt,
+    BSP_Benchmark_Fmt,
+    Round(Gap_Pct / 100 * Cur_SchedHours, 0.01)                                                as OEE_Impact,
     Gap_Score * $(vGapWeight) + Trend_Score * $(vTrendWeight)                                   as Composite_Score
 RESIDENT InsightRecords_Raw
 WHERE Gap_Score > 0;
@@ -2304,6 +2433,8 @@ LOAD
     Null()                                                                                      as sPltRsnKey,
     If(TotalSchedHrs_2wk > 0, Cur_ReasonDownHours / TotalSchedHrs_2wk, Null())                  as Cur_Actual,
     Rsn_BSP_DownPct                                                                             as BSP_Benchmark,
+    Num(If(TotalSchedHrs_2wk > 0, Cur_ReasonDownHours / TotalSchedHrs_2wk, Null()), '0.00%')   as Cur_Actual_Fmt,
+    Num(Rsn_BSP_DownPct,                                                              '0.00%')   as BSP_Benchmark_Fmt,
     If(Not IsNull(Rsn_BSP_DownPct) AND Rsn_BSP_DownPct > 0
         AND TotalSchedHrs_2wk > 0
         AND Cur_ReasonDownHours / TotalSchedHrs_2wk > Rsn_BSP_DownPct,
@@ -2328,6 +2459,8 @@ LOAD
     sPltRsnKey,
     If(TotalQty_2wk > 0, Cur_ReasonScrapQty / TotalQty_2wk, Null())                             as Cur_Actual,
     Rsn_BSP_ScrapPct                                                                            as BSP_Benchmark,
+    Num(If(TotalQty_2wk > 0, Cur_ReasonScrapQty / TotalQty_2wk, Null()), '0.00%')              as Cur_Actual_Fmt,
+    Num(Rsn_BSP_ScrapPct,                                                  '0.00%')             as BSP_Benchmark_Fmt,
     If(Not IsNull(Rsn_BSP_ScrapPct) AND Rsn_BSP_ScrapPct > 0
         AND TotalQty_2wk > 0
         AND Cur_ReasonScrapQty / TotalQty_2wk > Rsn_BSP_ScrapPct,
@@ -2380,6 +2513,9 @@ LOAD
     Null()                                                                                      as tPltRsnKey,
     Null()                                                                                      as sPltRsnKey,
     Null()                                                                                      as Impact_Score,
+    OEE_Impact,
+    Cur_Actual_Fmt,
+    BSP_Benchmark_Fmt,
     If(Plant = Peek('Plant'),
         Peek('Insight_Rank') + 1, 1)                                                            as Insight_Rank
 RESIDENT InsightRecords_Sorted;
@@ -2424,6 +2560,9 @@ LOAD
     tPltRsnKey,
     sPltRsnKey,
     Impact_Score,
+    Null()                                                                                      as OEE_Impact,
+    Cur_Actual_Fmt,
+    BSP_Benchmark_Fmt,
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID')
         AND KPI_Name = Peek('KPI_Name'),
         Peek('Insight_Rank') + 1, 1)                                                            as Insight_Rank
