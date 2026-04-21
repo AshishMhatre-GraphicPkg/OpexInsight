@@ -1602,7 +1602,7 @@ LOAD
     Avg(Wk_ScrapRate)                                                                           as Cur_ScrapRate,
     Avg(Wk_SetupHrsPerEvent)                                                                    as Cur_SetupHrsPerEvent,
     Avg(Wk_SetupTimePct)                                                                        as Cur_SetupTimePct,
-    Avg(Wk_SchedHours)                                                                          as Cur_SchedHours,
+    Sum(Wk_SchedHours)                                                                          as Cur_SchedHours,
     Max(If(WeekStart = $(vLastWeekStart), Streak_OEE,              Null()))                     as Streak_OEE,
     Max(If(WeekStart = $(vLastWeekStart), Streak_Availability,     Null()))                     as Streak_Availability,
     Max(If(WeekStart = $(vLastWeekStart), Streak_Performance,      Null()))                     as Streak_Performance,
@@ -1664,6 +1664,46 @@ MAPPING LOAD
 FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - WcAttributes.qvd]
 (qvd);
 
+// Rebuild board attribute mapping tables — dropped at end of Step 3, needed
+// here for L1 (Die) and L2 (Board Type Group + Board Caliper) reason BSP keys
+[PlantMaterial_Rsn]:
+NoConcatenate
+LOAD
+    "Plant Material Key"    as PltMatKey,
+    Material,
+    "Board Type"
+FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - PlantMaterial.qvd]
+(qvd);
+
+[Materials_Rsn]:
+NoConcatenate
+LOAD
+    Material,
+    "Board Caliper"
+FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - Materials.qvd]
+(qvd);
+
+[BoardTypes_Rsn]:
+NoConcatenate
+LOAD
+    "Board Type",
+    "Board Type Group"
+FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - BoardTypes.qvd]
+(qvd);
+
+BoardType_Rsn_Map:
+MAPPING LOAD PltMatKey, "Board Type"       RESIDENT [PlantMaterial_Rsn];
+Material_Rsn_Map:
+MAPPING LOAD PltMatKey, Material           RESIDENT [PlantMaterial_Rsn];
+BoardTypeGroup_Rsn_Map:
+MAPPING LOAD "Board Type", "Board Type Group" RESIDENT [BoardTypes_Rsn];
+BoardCaliper_Rsn_Map:
+MAPPING LOAD Material, "Board Caliper"    RESIDENT [Materials_Rsn];
+
+DROP TABLE [PlantMaterial_Rsn];
+DROP TABLE [Materials_Rsn];
+DROP TABLE [BoardTypes_Rsn];
+
 
 // ============================================================
 // SECTION 39: REASON DENOMINATOR MAPS — 2-WEEK WINDOW
@@ -1704,43 +1744,109 @@ RESIDENT [ReasonDenom_Raw];
 
 DROP TABLE [ReasonDenom_Raw];
 
+// Die-level SchedHours + TotalQty for 2-week window — used as weights when
+// aggregating die+reason level BSP back up to machine+reason level
+[CurPeriod_DieStats_Raw]:
+NoConcatenate
+LOAD
+    "WC Object ID",
+    Die,
+    "Plant Material Key"                                                    as PltMatKey,
+    Sum(If(If(IsNull(fSched), 2, fSched) <= 1,
+        "Time - Run" + "Time - Down" + "Time - Setup"
+        + "Time - Setup Down" + "Time - Non-Crewed", 0))                    as Die_SchedHrs_2wk,
+    Sum(If(If(IsNull(fSched), 2, fSched) >= 1,
+        "Yield in OEE UOM" + "Scrap in OEE UOM", 0))                       as Die_TotalQty_2wk
+FROM [$(vFactQVD)]
+(qvd)
+WHERE Date >= $(v2WeekStart) AND Date < $(vCurrentWeekStart)
+GROUP BY "WC Object ID", Die, "Plant Material Key";
+
+DieSchedHrs_Rsn_Map:
+MAPPING LOAD
+    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey,
+    Die_SchedHrs_2wk
+RESIDENT [CurPeriod_DieStats_Raw];
+
+DieTotalQty_Rsn_Map:
+MAPPING LOAD
+    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey,
+    Die_TotalQty_2wk
+RESIDENT [CurPeriod_DieStats_Raw];
+
+DROP TABLE [CurPeriod_DieStats_Raw];
+
 
 // ============================================================
 // SECTION 40: CURRENT PERIOD DOWNTIME REASON AGGREGATION
-// Direct QVD load — 2-week window
+// Aggregated at Die + Reason grain to enable 3-level BSP fallback
+// L1 key : Plant|WC|Die|ReasonKey
+// L2 key : Plant|WC|BoardTypeGroup|BoardCaliper|ReasonKey
+// L3 key : Plant|WC|ReasonKey
+// BSP weighted by die SchedHours when rolling up to machine+reason
 // MRO setup reason rows excluded — not downtime events
 // Denominator : TotalSchedHrs_Rsn_Map (2-week total SchedHrs)
 // ============================================================
 
-CurPeriod_DwnReason_Raw:
+CurPeriod_DwnReason_DieLvl_Raw:
 NoConcatenate
 LOAD
     "WC Object ID",
+    Die,
+    "Plant Material Key"                                                    as PltMatKey,
     "Time Plant Reason Key",
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))      as Cur_ReasonDownHours
+    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))          as Cur_ReasonDownHours
 FROM [$(vFactQVD)]
 (qvd)
 WHERE Date >= $(v2WeekStart) AND Date < $(vCurrentWeekStart)
     AND Len(Trim("Time Plant Reason Key")) > 0
     AND Not WildMatch("Time Plant Reason Key", '*MR0*')
-GROUP BY "WC Object ID", "Time Plant Reason Key";
+GROUP BY "WC Object ID", Die, "Plant Material Key", "Time Plant Reason Key";
+
+CurPeriod_DwnReason_DieLvl:
+NoConcatenate
+LOAD
+    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')                 as Plant,
+    "WC Object ID",
+    "Time Plant Reason Key",
+    Cur_ReasonDownHours,
+    ApplyMap('DieSchedHrs_Rsn_Map',
+        ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
+        & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey, 0)           as Die_SchedHrs_2wk,
+    Coalesce(
+        ApplyMap('BSP_L1_DwnRsn_Map',
+            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
+            & [WC Object ID] & '|' & Die & '|' & [Time Plant Reason Key], Null()),
+        ApplyMap('BSP_L2_DwnRsn_Map',
+            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
+            & [WC Object ID] & '|'
+            & ApplyMap('BoardTypeGroup_Rsn_Map', ApplyMap('BoardType_Rsn_Map', PltMatKey, Null()), Null()) & '|'
+            & ApplyMap('BoardCaliper_Rsn_Map',   ApplyMap('Material_Rsn_Map',  PltMatKey, Null()), Null()) & '|'
+            & [Time Plant Reason Key], Null()),
+        ApplyMap('BSP_L3_DwnRsn_Map',
+            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
+            & [WC Object ID] & '|' & [Time Plant Reason Key], Null())
+    )                                                                       as Rsn_BSP_DownPct
+RESIDENT CurPeriod_DwnReason_DieLvl_Raw;
+
+DROP TABLE CurPeriod_DwnReason_DieLvl_Raw;
 
 CurPeriod_DwnReason:
 NoConcatenate
 LOAD
-    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')             as Plant,
+    Plant,
     "WC Object ID",
-    "Time Plant Reason Key"                                             as tPltRsnKey,
-    Cur_ReasonDownHours,
+    "Time Plant Reason Key"                                                 as tPltRsnKey,
+    Sum(Cur_ReasonDownHours)                                                as Cur_ReasonDownHours,
     ApplyMap('TotalSchedHrs_Rsn_Map',
-        ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
-        & '|' & [WC Object ID], Null())                                 as TotalSchedHrs_2wk,
-    ApplyMap('BSP_L3_DwnRsn_Map',
-        ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-        & [WC Object ID] & '|' & [Time Plant Reason Key], Null())       as Rsn_BSP_DownPct
-RESIDENT CurPeriod_DwnReason_Raw;
+        Plant & '|' & [WC Object ID], Null())                               as TotalSchedHrs_2wk,
+    If(Sum(If(Not IsNull(Rsn_BSP_DownPct), Die_SchedHrs_2wk, 0)) > 0,
+        Sum(If(Not IsNull(Rsn_BSP_DownPct), Die_SchedHrs_2wk * Rsn_BSP_DownPct, 0)) /
+        Sum(If(Not IsNull(Rsn_BSP_DownPct), Die_SchedHrs_2wk, 0)), Null()) as Rsn_BSP_DownPct
+RESIDENT CurPeriod_DwnReason_DieLvl
+GROUP BY Plant, "WC Object ID", "Time Plant Reason Key";
 
-DROP TABLE CurPeriod_DwnReason_Raw;
+DROP TABLE CurPeriod_DwnReason_DieLvl;
 DROP MAPPING TABLE BSP_L1_DwnRsn_Map;
 DROP MAPPING TABLE BSP_L2_DwnRsn_Map;
 DROP MAPPING TABLE BSP_L3_DwnRsn_Map;
@@ -1748,45 +1854,84 @@ DROP MAPPING TABLE BSP_L3_DwnRsn_Map;
 
 // ============================================================
 // SECTION 41: CURRENT PERIOD SCRAP REASON AGGREGATION
-// Direct QVD load — 2-week window
+// Aggregated at Die + Reason grain to enable 3-level BSP fallback
+// L1 key : Plant|WC|Die|ScrapReasonKey
+// L2 key : Plant|WC|BoardTypeGroup|BoardCaliper|ScrapReasonKey
+// L3 key : Plant|WC|ScrapReasonKey
+// BSP weighted by die TotalQty when rolling up to machine+reason
 // Denominator : TotalQty_Rsn_Map (all rows, not scrap rows only)
-// This correctly captures full production qty as denominator
 // ============================================================
 
-CurPeriod_ScrReason_Raw:
+CurPeriod_ScrReason_DieLvl_Raw:
 NoConcatenate
 LOAD
     "WC Object ID",
+    Die,
+    "Plant Material Key"                                                    as PltMatKey,
     "Scrap Plant Reason Key",
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM", 0)) as Cur_ReasonScrapQty
+    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM", 0))    as Cur_ReasonScrapQty
 FROM [$(vFactQVD)]
 (qvd)
 WHERE Date >= $(v2WeekStart) AND Date < $(vCurrentWeekStart)
     AND Len(Trim("Scrap Plant Reason Key")) > 0
-GROUP BY "WC Object ID", "Scrap Plant Reason Key";
+GROUP BY "WC Object ID", Die, "Plant Material Key", "Scrap Plant Reason Key";
+
+CurPeriod_ScrReason_DieLvl:
+NoConcatenate
+LOAD
+    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')                 as Plant,
+    "WC Object ID",
+    "Scrap Plant Reason Key",
+    Cur_ReasonScrapQty,
+    ApplyMap('DieTotalQty_Rsn_Map',
+        ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
+        & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey, 0)           as Die_TotalQty_2wk,
+    Coalesce(
+        ApplyMap('BSP_L1_ScrRsn_Map',
+            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
+            & [WC Object ID] & '|' & Die & '|' & [Scrap Plant Reason Key], Null()),
+        ApplyMap('BSP_L2_ScrRsn_Map',
+            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
+            & [WC Object ID] & '|'
+            & ApplyMap('BoardTypeGroup_Rsn_Map', ApplyMap('BoardType_Rsn_Map', PltMatKey, Null()), Null()) & '|'
+            & ApplyMap('BoardCaliper_Rsn_Map',   ApplyMap('Material_Rsn_Map',  PltMatKey, Null()), Null()) & '|'
+            & [Scrap Plant Reason Key], Null()),
+        ApplyMap('BSP_L3_ScrRsn_Map',
+            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
+            & [WC Object ID] & '|' & [Scrap Plant Reason Key], Null())
+    )                                                                       as Rsn_BSP_ScrapPct
+RESIDENT CurPeriod_ScrReason_DieLvl_Raw;
+
+DROP TABLE CurPeriod_ScrReason_DieLvl_Raw;
 
 CurPeriod_ScrReason:
 NoConcatenate
 LOAD
-    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')             as Plant,
+    Plant,
     "WC Object ID",
-    "Scrap Plant Reason Key"                                            as sPltRsnKey,
-    Cur_ReasonScrapQty,
+    "Scrap Plant Reason Key"                                                as sPltRsnKey,
+    Sum(Cur_ReasonScrapQty)                                                 as Cur_ReasonScrapQty,
     ApplyMap('TotalQty_Rsn_Map',
-        ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
-        & '|' & [WC Object ID], Null())                                 as TotalQty_2wk,
-    ApplyMap('BSP_L3_ScrRsn_Map',
-        ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-        & [WC Object ID] & '|' & [Scrap Plant Reason Key], Null())      as Rsn_BSP_ScrapPct
-RESIDENT CurPeriod_ScrReason_Raw;
+        Plant & '|' & [WC Object ID], Null())                               as TotalQty_2wk,
+    If(Sum(If(Not IsNull(Rsn_BSP_ScrapPct), Die_TotalQty_2wk, 0)) > 0,
+        Sum(If(Not IsNull(Rsn_BSP_ScrapPct), Die_TotalQty_2wk * Rsn_BSP_ScrapPct, 0)) /
+        Sum(If(Not IsNull(Rsn_BSP_ScrapPct), Die_TotalQty_2wk, 0)), Null()) as Rsn_BSP_ScrapPct
+RESIDENT CurPeriod_ScrReason_DieLvl
+GROUP BY Plant, "WC Object ID", "Scrap Plant Reason Key";
 
-DROP TABLE CurPeriod_ScrReason_Raw;
+DROP TABLE CurPeriod_ScrReason_DieLvl;
 DROP MAPPING TABLE BSP_L1_ScrRsn_Map;
 DROP MAPPING TABLE BSP_L2_ScrRsn_Map;
 DROP MAPPING TABLE BSP_L3_ScrRsn_Map;
 DROP MAPPING TABLE Plant_Reason_Map;
 DROP MAPPING TABLE TotalSchedHrs_Rsn_Map;
 DROP MAPPING TABLE TotalQty_Rsn_Map;
+DROP MAPPING TABLE DieSchedHrs_Rsn_Map;
+DROP MAPPING TABLE DieTotalQty_Rsn_Map;
+DROP MAPPING TABLE BoardType_Rsn_Map;
+DROP MAPPING TABLE Material_Rsn_Map;
+DROP MAPPING TABLE BoardTypeGroup_Rsn_Map;
+DROP MAPPING TABLE BoardCaliper_Rsn_Map;
 
 
 // ============================================================
