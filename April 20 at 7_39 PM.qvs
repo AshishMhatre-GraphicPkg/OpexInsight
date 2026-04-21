@@ -282,12 +282,8 @@ LOAD
     Date,
     "WC Object ID",
     Die,
-    "Carton Style",
-    "Plant Material Key"                                                                        as PltMatKey,
     "Shift Code",
-    "Operator ID",
-    "Order",
-    "Factory Order",
+    Max("Plant Material Key")                                                                   as PltMatKey,
     Max(If(WildMatch("Time Plant Reason Key", '*1MR0*'), 1,
         If(WildMatch("Time Plant Reason Key", '*2MR0*'), 2,
             If(WildMatch("Time Plant Reason Key", '*3MR0*'), 3,
@@ -311,12 +307,7 @@ GROUP BY
     Date,
     "WC Object ID",
     Die,
-    "Carton Style",
-    "Plant Material Key",
-    "Shift Code",
-    "Operator ID",
-    "Order",
-    "Factory Order";
+    "Shift Code";
 
 
 // ============================================================
@@ -331,12 +322,8 @@ LOAD
     Date,
     "WC Object ID",
     Die,
-    "Carton Style",
-    PltMatKey,
     "Shift Code",
-    "Operator ID",
-    "Order",
-    "Factory Order",
+    PltMatKey,
     MROClass,
     RunHours,
     DownHours,
@@ -381,22 +368,19 @@ DROP TABLE JobFact_Job_BSP_Agg;
 
 QualifyingRuns_Map:
 MAPPING LOAD
-    Date & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey
-        & '|' & [Shift Code] & '|' & [Operator ID] & '|' & [Order],
+    Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die,
     1
 RESIDENT JobFact_Job_BSP;
 
 SchedHours_Map:
 MAPPING LOAD
-    Date & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey
-        & '|' & [Shift Code] & '|' & [Operator ID] & '|' & [Order],
+    Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die,
     SchedHours
 RESIDENT JobFact_Job_BSP;
 
 TotalQty_Map:
 MAPPING LOAD
-    Date & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey
-        & '|' & [Shift Code] & '|' & [Operator ID] & '|' & [Order],
+    Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die,
     TotalQty_OEE
 RESIDENT JobFact_Job_BSP;
 
@@ -415,10 +399,8 @@ LOAD
     Date,
     "WC Object ID",
     Die,
-    "Plant Material Key"                                                                        as PltMatKey,
     "Shift Code",
-    "Operator ID",
-    "Order",
+    Max("Plant Material Key")                                                                   as PltMatKey,
     "Time Plant Reason Key",
     Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                              as ReasonDownHours
 RESIDENT JobFact_Raw
@@ -428,16 +410,12 @@ WHERE
     AND Not IsNull("Time Plant Reason Key")
     AND Not WildMatch("Time Plant Reason Key", '*MR0*')
     AND ApplyMap('QualifyingRuns_Map',
-            Date & '|' & [WC Object ID] & '|' & Die & '|' & [Plant Material Key]
-            & '|' & [Shift Code] & '|' & [Operator ID] & '|' & [Order], 0) = 1
+            Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die, 0) = 1
 GROUP BY
     Date,
     "WC Object ID",
     Die,
-    "Plant Material Key",
     "Shift Code",
-    "Operator ID",
-    "Order",
     "Time Plant Reason Key";
 
 JobFact_DownReason_BSP:
@@ -449,8 +427,7 @@ LOAD
     "Time Plant Reason Key",
     ReasonDownHours,
     ApplyMap('SchedHours_Map',
-        Date & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey
-        & '|' & [Shift Code] & '|' & [Operator ID] & '|' & [Order], Null())                    as SchedHours,
+        Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die, Null())                  as SchedHours,
     ApplyMap('Plant_Map',      "WC Object ID", 'Unknown')                                       as Plant,
     ApplyMap('Department_Map', "WC Object ID", 'Unknown')                                       as Department,
     ApplyMap('BoardTypeGroup_Map', ApplyMap('BoardType_Map', PltMatKey, Null()), Null())         as "Board Type Group",
@@ -473,10 +450,8 @@ LOAD
     Date,
     "WC Object ID",
     Die,
-    "Plant Material Key"                                                                        as PltMatKey,
     "Shift Code",
-    "Operator ID",
-    "Order",
+    Max("Plant Material Key")                                                                   as PltMatKey,
     "Scrap Plant Reason Key",
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM", 0))                         as ReasonScrapQty
 RESIDENT JobFact_Raw
@@ -485,16 +460,12 @@ WHERE
     AND Date < $(vCurrentWeekStart)
     AND Not IsNull("Scrap Plant Reason Key")
     AND ApplyMap('QualifyingRuns_Map',
-            Date & '|' & [WC Object ID] & '|' & Die & '|' & [Plant Material Key]
-            & '|' & [Shift Code] & '|' & [Operator ID] & '|' & [Order], 0) = 1
+            Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die, 0) = 1
 GROUP BY
     Date,
     "WC Object ID",
     Die,
-    "Plant Material Key",
     "Shift Code",
-    "Operator ID",
-    "Order",
     "Scrap Plant Reason Key";
 
 JobFact_ScrapReason_BSP:
@@ -506,8 +477,7 @@ LOAD
     "Scrap Plant Reason Key",
     ReasonScrapQty,
     ApplyMap('TotalQty_Map',
-        Date & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey
-        & '|' & [Shift Code] & '|' & [Operator ID] & '|' & [Order], Null())                    as TotalQty_OEE,
+        Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die, Null())                  as TotalQty_OEE,
     ApplyMap('Plant_Map',      "WC Object ID", 'Unknown')                                       as Plant,
     ApplyMap('Department_Map', "WC Object ID", 'Unknown')                                       as Department,
     ApplyMap('BoardTypeGroup_Map', ApplyMap('BoardType_Map', PltMatKey, Null()), Null())         as "Board Type Group",
@@ -1613,7 +1583,8 @@ LOAD
     Max(If(WeekStart = $(vLastWeekStart), Streak_ScrapRate,        Null()))                     as Streak_ScrapRate,
     Max(If(WeekStart = $(vLastWeekStart), Streak_SetupHrsPerEvent, Null()))                     as Streak_SetupHrsPerEvent,
     Max(If(WeekStart = $(vLastWeekStart), Streak_SetupTimePct,     Null()))                     as Streak_SetupTimePct,
-    Max(If(WeekStart = $(vLastWeekStart), BSP_CoveragePct,         Null()))                     as Cur_BSP_CoveragePct,
+    If(Sum(Wk_TotalSchedHours) > 0,
+        Sum(Wk_CoveredSchedHours) / Sum(Wk_TotalSchedHours), 0)                                as Cur_BSP_CoveragePct,
     Max(If(WeekStart = $(vLastWeekStart), BSP_ConfScore,           Null()))                     as Cur_BSP_ConfScore
 RESIDENT WeeklyMachineBSP
 WHERE WeekStart >= $(v2WeekStart) AND WeekStart < $(vCurrentWeekStart)
@@ -1970,7 +1941,7 @@ LOAD
 RESIDENT CurrentPeriod
 WHERE Not IsNull(Cur_BSP_OEE) AND Not IsNull(Cur_OEE)
     AND Cur_OEE < Cur_BSP_OEE
-    AND Cur_BSP_CoveragePct >= $(vMinCoverage);
+    AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
 Concatenate (InsightRecords_Raw)
 LOAD
@@ -1998,7 +1969,7 @@ LOAD
 RESIDENT CurrentPeriod
 WHERE Not IsNull(Cur_BSP_Availability) AND Not IsNull(Cur_Availability)
     AND Cur_Availability < Cur_BSP_Availability
-    AND Cur_BSP_CoveragePct >= $(vMinCoverage);
+    AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
 Concatenate (InsightRecords_Raw)
 LOAD
@@ -2026,7 +1997,7 @@ LOAD
 RESIDENT CurrentPeriod
 WHERE Not IsNull(Cur_BSP_Performance) AND Not IsNull(Cur_Performance)
     AND Cur_Performance < Cur_BSP_Performance
-    AND Cur_BSP_CoveragePct >= $(vMinCoverage);
+    AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
 Concatenate (InsightRecords_Raw)
 LOAD
@@ -2054,7 +2025,7 @@ LOAD
 RESIDENT CurrentPeriod
 WHERE Not IsNull(Cur_BSP_Quality) AND Not IsNull(Cur_Quality)
     AND Cur_Quality < Cur_BSP_Quality
-    AND Cur_BSP_CoveragePct >= $(vMinCoverage);
+    AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
 Concatenate (InsightRecords_Raw)
 LOAD
@@ -2082,7 +2053,7 @@ LOAD
 RESIDENT CurrentPeriod
 WHERE Not IsNull(Cur_BSP_Speed) AND Not IsNull(Cur_Speed)
     AND Cur_Speed < Cur_BSP_Speed
-    AND Cur_BSP_CoveragePct >= $(vMinCoverage);
+    AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
 Concatenate (InsightRecords_Raw)
 LOAD
@@ -2110,7 +2081,7 @@ LOAD
 RESIDENT CurrentPeriod
 WHERE Not IsNull(Cur_BSP_DowntimePct) AND Not IsNull(Cur_DowntimePct)
     AND Cur_DowntimePct > Cur_BSP_DowntimePct
-    AND Cur_BSP_CoveragePct >= $(vMinCoverage);
+    AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
 Concatenate (InsightRecords_Raw)
 LOAD
@@ -2138,7 +2109,7 @@ LOAD
 RESIDENT CurrentPeriod
 WHERE Not IsNull(Cur_BSP_ScrapRate) AND Not IsNull(Cur_ScrapRate)
     AND Cur_ScrapRate > Cur_BSP_ScrapRate
-    AND Cur_BSP_CoveragePct >= $(vMinCoverage);
+    AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
 Concatenate (InsightRecords_Raw)
 LOAD
@@ -2166,7 +2137,7 @@ LOAD
 RESIDENT CurrentPeriod
 WHERE Not IsNull(Cur_BSP_SetupHrsPerEvent) AND Not IsNull(Cur_SetupHrsPerEvent)
     AND Cur_SetupHrsPerEvent > Cur_BSP_SetupHrsPerEvent
-    AND Cur_BSP_CoveragePct >= $(vMinCoverage);
+    AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
 Concatenate (InsightRecords_Raw)
 LOAD
@@ -2194,7 +2165,7 @@ LOAD
 RESIDENT CurrentPeriod
 WHERE Not IsNull(Cur_BSP_SetupTimePct) AND Not IsNull(Cur_SetupTimePct)
     AND Cur_SetupTimePct > Cur_BSP_SetupTimePct
-    AND Cur_BSP_CoveragePct >= $(vMinCoverage);
+    AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
 DROP TABLE CurrentPeriod;
 
