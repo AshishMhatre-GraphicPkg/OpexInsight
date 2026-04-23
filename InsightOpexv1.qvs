@@ -1988,6 +1988,8 @@ LOAD
     Wk_SetupHrsPerEvent,
     Wk_SetupTimePct,
     Wk_SchedHours,
+    Wk_RunHours,
+    Wk_SetupCount,
 
     // Higher is better — lower = deterioration
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID')
@@ -2068,6 +2070,8 @@ LOAD
     Wk_SetupHrsPerEvent,
     Wk_SetupTimePct,
     Wk_SchedHours,
+    Wk_RunHours,
+    Wk_SetupCount,
     Streak_OEE,
     Streak_Availability,
     Streak_Performance,
@@ -2116,6 +2120,8 @@ LOAD
     Avg(Wk_SetupHrsPerEvent)                                                                    as Cur_SetupHrsPerEvent,
     Avg(Wk_SetupTimePct)                                                                        as Cur_SetupTimePct,
     Sum(Wk_SchedHours)                                                                          as Cur_SchedHours,
+    Sum(Wk_RunHours)                                                                            as Cur_RunHours,
+    Sum(Wk_SetupCount)                                                                          as Cur_SetupEventCount,
     Max(If(WeekStart = $(vLastWeekStart), Streak_OEE,              Null()))                     as Streak_OEE,
     Max(If(WeekStart = $(vLastWeekStart), Streak_Availability,     Null()))                     as Streak_Availability,
     Max(If(WeekStart = $(vLastWeekStart), Streak_Performance,      Null()))                     as Streak_Performance,
@@ -2900,6 +2906,7 @@ LOAD
     Num(Cur_OEE,         '0.00%')                                                               as Cur_Actual_Fmt,
     Num(Cur_BSP_OEE,     '0.00%')                                                               as BSP_Benchmark_Fmt,
     (Cur_BSP_OEE - Cur_OEE) / Cur_BSP_OEE * 100                                                 as Gap_Pct,
+    (Cur_BSP_OEE - Cur_OEE) * Cur_SchedHours                                                    as GapHrs,
     RangeMin(If(IsNull(Streak_OEE), 0, Streak_OEE), 4)                                          as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -2927,6 +2934,7 @@ LOAD
     Num(Cur_Availability,     '0.00%')                                                          as Cur_Actual_Fmt,
     Num(Cur_BSP_Availability, '0.00%')                                                          as BSP_Benchmark_Fmt,
     (Cur_BSP_Availability - Cur_Availability) / Cur_BSP_Availability * 100                      as Gap_Pct,
+    (Cur_BSP_Availability - Cur_Availability) * Cur_SchedHours                                  as GapHrs,
     RangeMin(If(IsNull(Streak_Availability), 0, Streak_Availability), 4)                        as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -2954,6 +2962,7 @@ LOAD
     Num(Cur_Performance,     '0.00%')                                                           as Cur_Actual_Fmt,
     Num(Cur_BSP_Performance, '0.00%')                                                           as BSP_Benchmark_Fmt,
     (Cur_BSP_Performance - Cur_Performance) / Cur_BSP_Performance * 100                         as Gap_Pct,
+    (Cur_BSP_Performance - Cur_Performance) * Cur_SchedHours                                    as GapHrs,
     RangeMin(If(IsNull(Streak_Performance), 0, Streak_Performance), 4)                          as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -2981,6 +2990,7 @@ LOAD
     Num(Cur_Quality,     '0.00%')                                                               as Cur_Actual_Fmt,
     Num(Cur_BSP_Quality, '0.00%')                                                               as BSP_Benchmark_Fmt,
     (Cur_BSP_Quality - Cur_Quality) / Cur_BSP_Quality * 100                                     as Gap_Pct,
+    (Cur_BSP_Quality - Cur_Quality) * Cur_SchedHours                                            as GapHrs,
     RangeMin(If(IsNull(Streak_Quality), 0, Streak_Quality), 4)                                  as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3008,6 +3018,7 @@ LOAD
     Cur_Speed                                                                                   as Cur_Actual_Fmt,
     Cur_BSP_Speed                                                                               as BSP_Benchmark_Fmt,
     (Cur_BSP_Speed - Cur_Speed) / Cur_BSP_Speed * 100                                           as Gap_Pct,
+    If(Cur_BSP_Speed > 0, (Cur_BSP_Speed - Cur_Speed) / Cur_BSP_Speed * Cur_RunHours, 0)       as GapHrs,
     RangeMin(If(IsNull(Streak_Speed), 0, Streak_Speed), 4)                                      as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3035,6 +3046,7 @@ LOAD
     Num(Cur_DowntimePct,     '0.00%')                                                           as Cur_Actual_Fmt,
     Num(Cur_BSP_DowntimePct, '0.00%')                                                           as BSP_Benchmark_Fmt,
     (Cur_DowntimePct - Cur_BSP_DowntimePct) / Cur_BSP_DowntimePct * 100                         as Gap_Pct,
+    (Cur_DowntimePct - Cur_BSP_DowntimePct) * Cur_SchedHours                                    as GapHrs,
     RangeMin(If(IsNull(Streak_DowntimePct), 0, Streak_DowntimePct), 4)                          as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3062,6 +3074,7 @@ LOAD
     Num(Cur_ScrapRate,     '0.00%')                                                             as Cur_Actual_Fmt,
     Num(Cur_BSP_ScrapRate, '0.00%')                                                             as BSP_Benchmark_Fmt,
     (Cur_ScrapRate - Cur_BSP_ScrapRate) / Cur_BSP_ScrapRate * 100                               as Gap_Pct,
+    (Cur_ScrapRate - Cur_BSP_ScrapRate) * Cur_SchedHours                                        as GapHrs,
     RangeMin(If(IsNull(Streak_ScrapRate), 0, Streak_ScrapRate), 4)                              as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3089,6 +3102,7 @@ LOAD
     Cur_SetupHrsPerEvent                                                                        as Cur_Actual_Fmt,
     Cur_BSP_SetupHrsPerEvent                                                                    as BSP_Benchmark_Fmt,
     (Cur_SetupHrsPerEvent - Cur_BSP_SetupHrsPerEvent) / Cur_BSP_SetupHrsPerEvent * 100          as Gap_Pct,
+    (Cur_SetupHrsPerEvent - Cur_BSP_SetupHrsPerEvent) * Cur_SetupEventCount                     as GapHrs,
     RangeMin(If(IsNull(Streak_SetupHrsPerEvent), 0, Streak_SetupHrsPerEvent), 4)                as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3116,6 +3130,7 @@ LOAD
     Num(Cur_SetupTimePct,     '0.00%')                                                          as Cur_Actual_Fmt,
     Num(Cur_BSP_SetupTimePct, '0.00%')                                                          as BSP_Benchmark_Fmt,
     (Cur_SetupTimePct - Cur_BSP_SetupTimePct) / Cur_BSP_SetupTimePct * 100                      as Gap_Pct,
+    (Cur_SetupTimePct - Cur_BSP_SetupTimePct) * Cur_SchedHours                                  as GapHrs,
     RangeMin(If(IsNull(Streak_SetupTimePct), 0, Streak_SetupTimePct), 4)                        as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3134,9 +3149,14 @@ DROP TABLE CurrentPeriod;
 // ============================================================
 // SECTION 43: UNIFIED OEE IMPACT SCORING
 // OEE_Impact = GapHrs * (1 + Streak_4wk / 4) in scheduled hours
-// GapHrs     = Gap_Pct / 100 * Cur_SchedHours
+// GapHrs is computed per-KPI as true absolute gap in hours:
+//   Pct KPIs (OEE/Avail/Perf/Quality/DT%/ScrapRate/SetupTime%):
+//     GapHrs = (BSP - Actual) * Cur_SchedHours
+//   Speed:
+//     GapHrs = (BSP - Actual) / BSP * Cur_RunHours
+//   Setup Hrs/Event:
+//     GapHrs = (Actual - BSP) * Cur_SetupEventCount
 // Streak_4wk capped at 4 (doubles OEE_Impact when trend is 4-of-4)
-// Same formula applied to reason rows in Section 44
 // ============================================================
 
 InsightRecords_Scored:
@@ -3152,6 +3172,7 @@ LOAD
     Cur_Actual,
     BSP_Benchmark,
     Gap_Pct,
+    GapHrs,
     Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3161,12 +3182,12 @@ LOAD
     BSP_Benchmark_Fmt,
     Null()                                                                                      as Reasons,
     Round(
-        (Gap_Pct / 100 * Cur_SchedHours)
+        GapHrs
         * (1 + RangeMin(If(IsNull(Streak_4wk), 0, Streak_4wk), 4) / 4),
         0.01
     )                                                                                           as OEE_Impact
 RESIDENT InsightRecords_Raw
-WHERE Gap_Pct > 0;
+WHERE GapHrs > 0;
 
 DROP TABLE InsightRecords_Raw;
 
@@ -3317,7 +3338,10 @@ LOAD
     If(Not IsNull(Feeder_BSP_CntRate) AND Feeder_BSP_CntRate > 0
         AND TotalSchedHrs_2wk > 0
         AND Cur_FeederDownCount / TotalSchedHrs_2wk > Feeder_BSP_CntRate,
-        Round((Cur_FeederDownCount / TotalSchedHrs_2wk - Feeder_BSP_CntRate) * TotalSchedHrs_2wk, 0.01),
+        Round(
+            (Cur_FeederDownCount - Feeder_BSP_CntRate * TotalSchedHrs_2wk)
+            * If(Cur_FeederDownCount > 0, Cur_FeederDownHours / Cur_FeederDownCount, 0),
+            0.01),
         0)                                                                                       as OEE_Impact
 RESIDENT CurPeriod_Feeder
 WHERE Not IsNull(Feeder_BSP_CntRate)
@@ -3346,7 +3370,10 @@ LOAD
     If(Not IsNull(Feeder_BSP_Per10K) AND Feeder_BSP_Per10K > 0
         AND Cur_FeederTotalQty > 0
         AND Cur_FeederDownCount / Cur_FeederTotalQty * 10000 > Feeder_BSP_Per10K,
-        Round((Cur_FeederDownCount / Cur_FeederTotalQty * 10000 - Feeder_BSP_Per10K) * TotalSchedHrs_2wk, 0.01),
+        Round(
+            (Cur_FeederDownCount - Feeder_BSP_Per10K * Cur_FeederTotalQty / 10000)
+            * If(Cur_FeederDownCount > 0, Cur_FeederDownHours / Cur_FeederDownCount, 0),
+            0.01),
         0)                                                                                       as OEE_Impact
 RESIDENT CurPeriod_Feeder
 WHERE Not IsNull(Feeder_BSP_Per10K)
@@ -3412,7 +3439,10 @@ LOAD
     If(Not IsNull(Blanket_BSP_CntRate) AND Blanket_BSP_CntRate > 0
         AND TotalSchedHrs_2wk > 0
         AND Cur_BlanketDownCount / TotalSchedHrs_2wk > Blanket_BSP_CntRate,
-        Round((Cur_BlanketDownCount / TotalSchedHrs_2wk - Blanket_BSP_CntRate) * TotalSchedHrs_2wk, 0.01),
+        Round(
+            (Cur_BlanketDownCount - Blanket_BSP_CntRate * TotalSchedHrs_2wk)
+            * If(Cur_BlanketDownCount > 0, Cur_BlanketDownHours / Cur_BlanketDownCount, 0),
+            0.01),
         0)                                                                                       as OEE_Impact
 RESIDENT CurPeriod_Blanket
 WHERE Not IsNull(Blanket_BSP_CntRate)
@@ -3441,7 +3471,10 @@ LOAD
     If(Not IsNull(Blanket_BSP_Per10K) AND Blanket_BSP_Per10K > 0
         AND Cur_BlanketTotalQty > 0
         AND Cur_BlanketDownCount / Cur_BlanketTotalQty * 10000 > Blanket_BSP_Per10K,
-        Round((Cur_BlanketDownCount / Cur_BlanketTotalQty * 10000 - Blanket_BSP_Per10K) * TotalSchedHrs_2wk, 0.01),
+        Round(
+            (Cur_BlanketDownCount - Blanket_BSP_Per10K * Cur_BlanketTotalQty / 10000)
+            * If(Cur_BlanketDownCount > 0, Cur_BlanketDownHours / Cur_BlanketDownCount, 0),
+            0.01),
         0)                                                                                       as OEE_Impact
 RESIDENT CurPeriod_Blanket
 WHERE Not IsNull(Blanket_BSP_Per10K)
