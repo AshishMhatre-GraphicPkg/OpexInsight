@@ -79,13 +79,32 @@ Then:
 - **Section 36–37:** `CurrentPeriod` — 2-week aggregation. `Cur_SchedHours = Sum(Wk_SchedHours)`. `Cur_BSP_CoveragePct = Sum(Wk_CoveredSchedHours) / Sum(Wk_TotalSchedHours)` across both weeks.
 - **Sections 38–41:** Reason denominator maps and current-period reason aggs (die grain → machine+reason grain with weighted BSP fallback). Section 38 also builds `Department_Rsn_Map` (WC → Department). Sections 40–41 re-read `vFactQVD` for the 2-week window and carry `CartonStyle` (via `Only()`) and `NumberUp` (via `Max(ApplyMap('OrderOp_NumberUp_Map', ...))`), then apply `Department_Rsn_Map` to derive the L2_ExtraDim string inline in each L2 Coalesce key.
 
+### Step 5 (addition) — Section 41B: 4-week reason streak
+
+Per-reason `Streak_4wk` (range 0–4) is the count of weeks in the last 4 full weeks where the reason's weekly rate exceeded its 2-week rolled-up BSP benchmark. Scope is **Downtime (`tPltRsnKey`) and Scrap (`sPltRsnKey`) only** — Feeder/Blanket rows emit `Streak_4wk = 0` (no weekly pipeline). Weekly denominator maps (`WeeklySchedHrs_Rsn_Map`, `WeeklyTotalQty_Rsn_Map`) and BSP-benchmark maps (`Rsn_BSP_Down_Map`, `Rsn_BSP_Scrap_Map`) are built and dropped locally. Output maps consumed by Section 44: `Rsn_Down_Streak_Map`, `Rsn_Scrap_Streak_Map`.
+
 ### Step 6 — Insight Records, Scoring, Store (Sections 42–48)
 
-- **Section 42:** `InsightRecords_Raw` — 9 `LOAD` blocks (one per KPI: OEE, Availability, Performance, Quality, Speed, Downtime %, Scrap Rate, Setup Hrs/Event, Setup Time %) with `Concatenate`. Insight fires when `Cur_Actual` is worse than `BSP_Benchmark` **AND** `Cur_BSP_CoveragePct > 0.5` (strict greater-than). Each block also produces `Cur_Actual_Fmt` and `BSP_Benchmark_Fmt` as Qlik dual values using `Num()` — percentage KPIs (0-1 fractions) use `'0.00%'`, Speed uses `'#,##0.00'`, Setup Hrs/Event uses `'0.00'`.
-- **Section 43:** `Composite_Score = Gap_Score × 0.70 + Trend_Score × 0.30`. Also computes `OEE_Impact = Round(Gap_Pct / 100 * Cur_SchedHours, 0.01)` — the equivalent scheduled hours lost due to the KPI gap. Must be computed here because `Cur_SchedHours` is excluded from the Section 45 explicit field list.
-- **Section 44:** Reason insights — downtime weighted by `TotalSchedHrs_2wk`, scrap weighted by `TotalQty_2wk`. `Impact_Score = (Cur% - BSP%) × TotalHrs` (converts % gap to actual hours/units). `Cur_Actual_Fmt` and `BSP_Benchmark_Fmt` added here as `'0.00%'` duals (the conditional expression is repeated verbatim — aliases are not referenceable within the same LOAD block in Qlik).
-- **Sections 45–47:** Sort, rank (`Peek()` counter), combine main + reason into `InsightRecords`. Main rows carry `OEE_Impact`, `Cur_Actual_Fmt`, `BSP_Benchmark_Fmt`; reason rows carry `Null() as OEE_Impact` (they use `Impact_Score` instead) plus the two fmt fields.
-- **Section 48:** Incremental store — load history QVD excluding `Period_Start = vPeriodStartStr`, `Concatenate` new records, store back. If QVD does not yet exist, store only current records. Historical rows pre-dating this change will show NULL for `OEE_Impact`, `Cur_Actual_Fmt`, `BSP_Benchmark_Fmt` — expected and safe.
+- **Section 42:** `InsightRecords_Raw` — 9 `LOAD` blocks (one per KPI: OEE, Availability, Performance, Quality, Speed, Downtime %, Scrap Rate, Setup Hrs/Event, Setup Time %) with `Concatenate`. Insight fires when `Cur_Actual` is worse than `BSP_Benchmark` **AND** `Cur_BSP_CoveragePct > 0.5`. Each block emits `Gap_Pct` and `Streak_4wk` (`RangeMin(Streak_X, 4)`). Percentage KPIs format `Cur_Actual_Fmt` / `BSP_Benchmark_Fmt` with `Num(..., '0.00%')`. **Ratio / absolute KPIs (Speed, Setup Hrs/Event) pass the raw numeric through unchanged** so front-end formatting controls display.
+- **Section 43:** Unified scoring. `OEE_Impact = Round(GapHrs × (1 + Streak_4wk/4), 0.01)` where `GapHrs = Gap_Pct / 100 × Cur_SchedHours`. No more `Composite_Score`, `Gap_Score`, `Trend_Score`. A `Null() as Reasons` column is seeded here so Main rows align with Reason rows downstream.
+- **Section 44:** Reason insights. Downtime and scrap reasons resolve `Reasons` via `ApplyMap('TimeReason_Name_Map', …)` / `ApplyMap('ScrapReason_Name_Map', …)`; `Streak_4wk` from the Section 41B maps; `OEE_Impact = Round(GapHrs × (1 + Streak_4wk/4), 0.01)` with `GapHrs` expressed in scheduled hours (scrap uses `ApplyMap('CurSchedHrs_Map', ...)` to convert %-gap × qty → hours). **`tPltRsnKey` / `sPltRsnKey` are NOT emitted** — the single `Reasons` column carries the readable name for both streams, with `KPI_Name ∈ {'Downtime Reason', 'Scrap Reason'}` discriminating type.
+- **Sections 44B / 44C:** Feeder (3 metrics) and Blanket (3 metrics) rows emit `Reasons` = literal KPI name (e.g. `'Feeder DT%'`), `Streak_4wk = 0`, and `OEE_Impact = GapHrs` (no trend uplift). Count Rate / Per10K metrics pass raw numeric to `Cur_Actual_Fmt` / `BSP_Benchmark_Fmt` (no `Num` wrapper).
+- **Section 45:** Main KPIs ranked `ORDER BY Plant, OEE_Impact DESC`. Unified schema matches Reason rows.
+- **Section 46:** Reason insights ranked `ORDER BY Plant, WC, KPI_Name, OEE_Impact DESC`. **Top-3 cap** applied to `KPI_Name IN ('Downtime Reason', 'Scrap Reason')` only — Feeder/Blanket one-per-machine rows pass through uncapped.
+- **Section 47:** Concatenate MainInsightRecords + ReasonInsightRecords into `InsightRecords`. Drop `TimeReason_Name_Map` / `ScrapReason_Name_Map` here.
+- **Section 48:** Incremental store — unchanged mechanics. The QVD's historical rows pre-dating this refactor will have legacy fields (`tPltRsnKey`, `Composite_Score`, `Impact_Score`, `Streak_13wk`) as NULL on new writes and new fields (`Reasons`, `OEE_Impact`, `Streak_4wk` for reasons) as NULL on old rows — Qlik concat tolerates this. A one-time full reload cleans up the QVD if desired.
+
+**Final `InsightRecords` schema** (both main + reason rows):
+```
+Insight_ID, Plant, WC Object ID, Plant - WC, Department, Period_Start,
+KPI_Name, Reasons, Cur_Actual, BSP_Benchmark, Cur_Actual_Fmt, BSP_Benchmark_Fmt,
+Gap_Pct, Streak_4wk, OEE_Impact,
+Cur_BSP_CoveragePct, Cur_BSP_ConfScore, BSP_Confidence, Insight_Rank
+```
+
+Reason rows have `Cur_BSP_CoveragePct / Cur_BSP_ConfScore / BSP_Confidence = Null()`; Main rows have `Reasons = Null()`.
+
+**Removed fields** (no longer in output): `tPltRsnKey`, `sPltRsnKey`, `Streak_13wk`, `Gap_Score`, `Trend_Score`, `Composite_Score`, `Impact_Score`.
 
 ---
 
