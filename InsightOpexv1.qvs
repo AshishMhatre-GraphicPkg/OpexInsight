@@ -885,6 +885,7 @@ LOAD
     FRACTILE(If(Perf_Denom   > 0, TotalQty_OEE / Perf_Denom,   Null()), 0.9)                  as L1_BSP_Performance,
     FRACTILE(If(TotalQty_OEE > 0, GoodQty_OEE  / TotalQty_OEE, Null()), 0.9)                  as L1_BSP_Quality,
     FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.9)                  as L1_BSP_Speed,
+    FRACTILE(If(RunHours + DownHours > 0, GoodQty_OEE / (RunHours + DownHours), Null()), 0.9) as L1_BSP_NetThroughput,
     FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.1)                  as L1_BSP_DowntimePct,
     FRACTILE(DownHours,                                                   0.1)                  as L1_BSP_DowntimeHrs,
     FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.1)                  as L1_BSP_ScrapRate
@@ -918,6 +919,7 @@ LOAD
     FRACTILE(If(Perf_Denom   > 0, TotalQty_OEE / Perf_Denom,   Null()), 0.9)                  as L2_BSP_Performance,
     FRACTILE(If(TotalQty_OEE > 0, GoodQty_OEE  / TotalQty_OEE, Null()), 0.9)                  as L2_BSP_Quality,
     FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.9)                  as L2_BSP_Speed,
+    FRACTILE(If(RunHours + DownHours > 0, GoodQty_OEE / (RunHours + DownHours), Null()), 0.9) as L2_BSP_NetThroughput,
     FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.1)                  as L2_BSP_DowntimePct,
     FRACTILE(DownHours,                                                   0.1)                  as L2_BSP_DowntimeHrs,
     FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.1)                  as L2_BSP_ScrapRate
@@ -948,6 +950,7 @@ LOAD
     FRACTILE(If(Perf_Denom   > 0, TotalQty_OEE / Perf_Denom,   Null()), 0.9)                  as L3_BSP_Performance,
     FRACTILE(If(TotalQty_OEE > 0, GoodQty_OEE  / TotalQty_OEE, Null()), 0.9)                  as L3_BSP_Quality,
     FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.9)                  as L3_BSP_Speed,
+    FRACTILE(If(RunHours + DownHours > 0, GoodQty_OEE / (RunHours + DownHours), Null()), 0.9) as L3_BSP_NetThroughput,
     FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.1)                  as L3_BSP_DowntimePct,
     FRACTILE(DownHours,                                                   0.1)                  as L3_BSP_DowntimeHrs,
     FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.1)                  as L3_BSP_ScrapRate
@@ -1390,6 +1393,10 @@ BSP_L1_Speed_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_Speed
 RESIDENT BSP_Main_L1;
 
+BSP_L1_NetThroughput_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_NetThroughput
+RESIDENT BSP_Main_L1;
+
 BSP_L1_DTPct_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_DowntimePct
 RESIDENT BSP_Main_L1;
@@ -1424,6 +1431,10 @@ BSP_L2_Speed_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_Speed
 RESIDENT BSP_Main_L2;
 
+BSP_L2_NetThroughput_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_NetThroughput
+RESIDENT BSP_Main_L2;
+
 BSP_L2_DTPct_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_DowntimePct
 RESIDENT BSP_Main_L2;
@@ -1456,6 +1467,10 @@ RESIDENT BSP_Main_L3;
 
 BSP_L3_Speed_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_Speed
+RESIDENT BSP_Main_L3;
+
+BSP_L3_NetThroughput_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_NetThroughput
 RESIDENT BSP_Main_L3;
 
 BSP_L3_DTPct_Map:
@@ -1743,6 +1758,13 @@ LOAD
         ApplyMap('BSP_L3_Speed_Map',    Plant & '|' & [WC Object ID], Null()))                  as Die_BSP_Speed,
 
     Coalesce(
+        ApplyMap('BSP_L1_NetThroughput_Map', Plant & '|' & [WC Object ID] & '|' & Die, Null()),
+        ApplyMap('BSP_L2_NetThroughput_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
+        ApplyMap('BSP_L3_NetThroughput_Map', Plant & '|' & [WC Object ID], Null()))               as Die_BSP_NetThroughput,
+
+    Coalesce(
         ApplyMap('BSP_L1_DTPct_Map',    Plant & '|' & [WC Object ID] & '|' & Die, Null()),
         ApplyMap('BSP_L2_DTPct_Map',    Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
             If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
@@ -1875,6 +1897,10 @@ LOAD
         Sum(If(Not IsNull(Die_BSP_Speed),         Wk_Die_SchedHours * Die_BSP_Speed, 0)) /
         Sum(If(Not IsNull(Die_BSP_Speed),         Wk_Die_SchedHours, 0)), Null())              as Wk_BSP_Speed,
 
+    If(Sum(If(Not IsNull(Die_BSP_NetThroughput), Wk_Die_SchedHours, 0)) > 0,
+        Sum(If(Not IsNull(Die_BSP_NetThroughput), Wk_Die_SchedHours * Die_BSP_NetThroughput, 0)) /
+        Sum(If(Not IsNull(Die_BSP_NetThroughput), Wk_Die_SchedHours, 0)), Null())              as Wk_BSP_NetThroughput,
+
     If(Sum(If(Not IsNull(Die_BSP_DowntimePct),   Wk_Die_SchedHours, 0)) > 0,
         Sum(If(Not IsNull(Die_BSP_DowntimePct),   Wk_Die_SchedHours * Die_BSP_DowntimePct, 0)) /
         Sum(If(Not IsNull(Die_BSP_DowntimePct),   Wk_Die_SchedHours, 0)), Null())              as Wk_BSP_DowntimePct,
@@ -1932,6 +1958,7 @@ LOAD
     If(Sum(Perf_Denom)   > 0, Sum(TotalQty_OEE) / Sum(Perf_Denom),   Null())                   as Wk_Performance,
     If(Sum(TotalQty_OEE) > 0, Sum(GoodQty_OEE)  / Sum(TotalQty_OEE), Null())                   as Wk_Quality,
     If(Sum(RunHours)     > 0, Sum(TotalQty_OEE) / Sum(RunHours),      Null())                   as Wk_Speed,
+    If(Sum(RunHours) + Sum(DownHours) > 0, Sum(GoodQty_OEE) / (Sum(RunHours) + Sum(DownHours)), Null()) as Wk_NetThroughput,
     If(Sum(SchedHours)   > 0, Sum(DownHours)     / Sum(SchedHours),   Null())                   as Wk_DowntimePct,
     Sum(DownHours)                                                                               as Wk_DowntimeHrs,
     If(Sum(TotalQty_OEE) > 0, Sum(ScrapQty_OEE) / Sum(TotalQty_OEE), Null())                   as Wk_ScrapRate,
@@ -1982,6 +2009,7 @@ LOAD
     Wk_Performance,
     Wk_Quality,
     Wk_Speed,
+    Wk_NetThroughput,
     Wk_DowntimePct,
     Wk_DowntimeHrs,
     Wk_ScrapRate,
@@ -2016,6 +2044,11 @@ LOAD
         AND Not IsNull(Wk_Speed) AND Not IsNull(Peek('Wk_Speed'))
         AND Wk_Speed < Peek('Wk_Speed'),
         Peek('Streak_Speed') + 1, 0)                                                            as Streak_Speed,
+
+    If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID')
+        AND Not IsNull(Wk_NetThroughput) AND Not IsNull(Peek('Wk_NetThroughput'))
+        AND Wk_NetThroughput < Peek('Wk_NetThroughput'),
+        Peek('Streak_NetThroughput') + 1, 0)                                                    as Streak_NetThroughput,
 
     // Lower is better — higher = deterioration
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID')
@@ -2064,6 +2097,7 @@ LOAD
     Wk_Performance,
     Wk_Quality,
     Wk_Speed,
+    Wk_NetThroughput,
     Wk_DowntimePct,
     Wk_DowntimeHrs,
     Wk_ScrapRate,
@@ -2077,6 +2111,7 @@ LOAD
     Streak_Performance,
     Streak_Quality,
     Streak_Speed,
+    Streak_NetThroughput,
     Streak_DowntimePct,
     Streak_DowntimeHrs,
     Streak_ScrapRate,
@@ -2104,6 +2139,7 @@ LOAD
     Avg(Wk_BSP_Performance)                                                                     as Cur_BSP_Performance,
     Avg(Wk_BSP_Quality)                                                                         as Cur_BSP_Quality,
     Avg(Wk_BSP_Speed)                                                                           as Cur_BSP_Speed,
+    Avg(Wk_BSP_NetThroughput)                                                                   as Cur_BSP_NetThroughput,
     Avg(Wk_BSP_DowntimePct)                                                                     as Cur_BSP_DowntimePct,
     Avg(Wk_BSP_DowntimeHrs)                                                                     as Cur_BSP_DowntimeHrs,
     Avg(Wk_BSP_ScrapRate)                                                                       as Cur_BSP_ScrapRate,
@@ -2114,6 +2150,7 @@ LOAD
     Avg(Wk_Performance)                                                                         as Cur_Performance,
     Avg(Wk_Quality)                                                                             as Cur_Quality,
     Avg(Wk_Speed)                                                                               as Cur_Speed,
+    Avg(Wk_NetThroughput)                                                                       as Cur_NetThroughput,
     Avg(Wk_DowntimePct)                                                                         as Cur_DowntimePct,
     Avg(Wk_DowntimeHrs)                                                                         as Cur_DowntimeHrs,
     Avg(Wk_ScrapRate)                                                                           as Cur_ScrapRate,
@@ -2127,6 +2164,7 @@ LOAD
     Max(If(WeekStart = $(vLastWeekStart), Streak_Performance,      Null()))                     as Streak_Performance,
     Max(If(WeekStart = $(vLastWeekStart), Streak_Quality,          Null()))                     as Streak_Quality,
     Max(If(WeekStart = $(vLastWeekStart), Streak_Speed,            Null()))                     as Streak_Speed,
+    Max(If(WeekStart = $(vLastWeekStart), Streak_NetThroughput,   Null()))                      as Streak_NetThroughput,
     Max(If(WeekStart = $(vLastWeekStart), Streak_DowntimePct,      Null()))                     as Streak_DowntimePct,
     Max(If(WeekStart = $(vLastWeekStart), Streak_DowntimeHrs,      Null()))                     as Streak_DowntimeHrs,
     Max(If(WeekStart = $(vLastWeekStart), Streak_ScrapRate,        Null()))                     as Streak_ScrapRate,
@@ -3035,6 +3073,36 @@ LOAD
 RESIDENT CurrentPeriod
 WHERE Not IsNull(Cur_BSP_Speed) AND Not IsNull(Cur_Speed)
     AND Cur_Speed < Cur_BSP_Speed
+    AND Cur_BSP_CoveragePct > $(vMinCoverage);
+
+Concatenate (InsightRecords_Raw)
+LOAD
+    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|NETTHROUGHPUT' as Insight_ID,
+    Plant,
+    "WC Object ID",
+    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                       as "Plant - WC",
+    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
+    Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
+    'Net Throughput Rate'                                                                       as KPI_Name,
+    'Outcome'                                                                                   as KPI_Category,
+    Cur_NetThroughput                                                                           as Cur_Actual,
+    Cur_BSP_NetThroughput                                                                       as BSP_Benchmark,
+    Cur_NetThroughput                                                                           as Cur_Actual_Fmt,
+    Cur_BSP_NetThroughput                                                                       as BSP_Benchmark_Fmt,
+    (Cur_BSP_NetThroughput - Cur_NetThroughput) / Cur_BSP_NetThroughput * 100                  as Gap_Pct,
+    If(Cur_BSP_NetThroughput > 0,
+        (Cur_BSP_NetThroughput - Cur_NetThroughput) / Cur_BSP_NetThroughput * (Cur_RunHours + Cur_DowntimeHrs), 0) as GapHrs,
+    RangeMin(If(IsNull(Streak_NetThroughput), 0, Streak_NetThroughput), 4)                      as Streak_4wk,
+    Cur_SchedHours,
+    Cur_BSP_CoveragePct,
+    Cur_BSP_ConfScore,
+    If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
+        If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
+            If(Cur_BSP_ConfScore >= 0.5, 'LOW',
+                'Insufficient History')))                                                        as BSP_Confidence
+RESIDENT CurrentPeriod
+WHERE Not IsNull(Cur_BSP_NetThroughput) AND Not IsNull(Cur_NetThroughput)
+    AND Cur_NetThroughput < Cur_BSP_NetThroughput
     AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
 Concatenate (InsightRecords_Raw)
