@@ -19,7 +19,7 @@ The script is a single `.qvs` file divided into 6 logical tabs (marked with `///
 ### Step 1 — Variables & Config
 - Week boundary variables (`vCurrentWeekStart`, `vLastWeekStart`, `v2WeekStart`, `v4WeekStart`, `v13WeekStart`) computed from `Today()` using `WeekStart()` with `vWeekStartDay = 0` (Monday). **`v2WeekStart = vLastWeekStart` (both set to `-1`) — the current period is 1 week, not 2.** `v4WeekStart` is used only for the Section 41B streak weekly lookback.
 - BSP window: `v2YearStart` = rolling 24 months back from today (not a fixed date).
-- Thresholds: `vBSP_L1_Min=10`, `vBSP_L2_Min=20`, `vBSP_L3_Min=30`, `vMinCoverage=0.5`.
+- Thresholds: `vBSP_L1_Min=10`, `vBSP_L2_Min=20`, `vBSP_L3_Min=30`, `vMinCoverage=0.5`, `vBSP_DT_MinRunPct=0.40` (DT% bifurcated pool run-exposure floor — tune here without script changes).
 - Output path `vInsightQVDPath` → SharePoint; fact source `vFactQVD` → QVD library.
 
 ### Step 2 — Dimension Tables
@@ -36,9 +36,11 @@ This is the most complex step. `JobFact_Raw` is loaded once (full binary QVD rea
 | Table | Grain | Purpose |
 |---|---|---|
 | `JobFact_Job_BSP_Agg` | Date + WC + Shift + Die | L1 BSP source aggregation |
-| `JobFact_Job_BSP` | Same grain, RunHours > 2 filter | L1 BSP qualifying runs |
+| `JobFact_Job_BSP` | Same grain, RunHours > 2 filter | L1 BSP qualifying runs (all KPIs except DT%) |
+| `JobFact_Job_DT_BSP` | Same, + RunHours/SchedHours ≥ `vBSP_DT_MinRunPct` | DT%-only stricter pool (L1 and L3 grain) |
 | `JobFact_Job_BSP_L2_Agg` | Date + WC + Shift + Die + **PltMatKey** | L2 BSP source (PltMatKey as true GROUP BY, not Max()) |
-| `JobFact_Job_BSP_L2` | Same + board attributes resolved | L2 BSP qualifying runs |
+| `JobFact_Job_BSP_L2` | Same + board attributes resolved | L2 BSP qualifying runs (all KPIs except DT%) |
+| `JobFact_Job_DT_BSP_L2` | Same, + RunHours/SchedHours ≥ `vBSP_DT_MinRunPct` | DT%-only stricter pool (L2 grain) |
 | `JobFact_DownReason_BSP` | Date + WC + Shift + Die + PltMatKey + ReasonKey | Downtime reason BSP source |
 | `JobFact_ScrapReason_BSP` | Date + WC + Shift + Die + PltMatKey + ReasonKey | Scrap reason BSP source |
 | `JobFact_Scoring_Agg` | Date + WC + Die + Carton + PltMatKey + Shift + Operator + Order | 13-week trend + current period |
@@ -124,6 +126,7 @@ Reason rows have `Cur_BSP_CoveragePct / Cur_BSP_ConfScore / BSP_Confidence = Nul
 | `Only()` for string fields in aggregations, `Max()` for numerics | `Max()` on a text field in Qlik returns NULL. `Only()` returns the value if the group contains exactly one distinct value (else NULL, which acts as a data-quality signal). Used for `CartonStyle` everywhere it is aggregated. `NumberUp` is numeric so `Max()` is correct. |
 | `OEE_Impact` is true hours lost vs BSP | All KPIs now use absolute-gap × time-denominator; `Gap_Pct` keeps the relative display. Scoring numbers were wrong units — plant leaders read `OEE_Impact` as hours. |
 | `KPI_Category` splits Outcome from Lever | `'Outcome'`: OEE, Availability, Quality, Downtime %, Scrap Rate, Net Throughput Rate (composite KPIs, not directly fixable). `'Lever'`: everything else (Performance, Speed, Setup Hrs/Event, Setup Time %, all Reasons, all Feeder/Blanket). Rationale: flat ranking by `OEE_Impact` was always dominated by Outcome KPIs. Front-end filters `KPI_Category = 'Lever'` to produce the weekly action list; Outcome rows remain for scorecard context. Both categories are stored in `InsightRecords`. |
+| Bifurcated DT% qualifying pool | DT% = DownHours/SchedHours shares its denominator with Setup. Setup-heavy shifts depress DT% P10 artificially (machine didn't run long enough to accumulate normal failure events). A stricter `RunHours/SchedHours ≥ vBSP_DT_MinRunPct (0.40)` gate is applied to the DT% FRACTILE pool only — `JobFact_Job_DT_BSP` / `JobFact_Job_DT_BSP_L2` — and the result is LEFT JOINed back into `BSP_Main_L{1,2,3}` as `L{n}_BSP_DowntimePct_New` before mapping tables are built. Setup% and all other KPI pools are **unchanged**. Threshold is a config variable for future tuning. |
 | `Cur_BSP_CoveragePct` is 1-week coverage | `Sum(CoveredSchedHours) / Sum(TotalSchedHours)` over the single current week (`v2WeekStart = vLastWeekStart`). |
 | Coverage threshold is strict `> 0.5` | Not `>= 0.5`. Exactly 50% coverage does not pass. |
 | `Cur_SchedHours = Sum(Wk_SchedHours)` | Represents total scheduled hours for the 1-week current period. `Avg` was incorrect. |

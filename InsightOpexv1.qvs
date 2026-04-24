@@ -30,10 +30,11 @@ LET v4WeekStart       = Num(WeekStart(Today(),  -4, $(vWeekStartDay)));
 LET v13WeekStart      = Num(WeekStart(Today(), -13, $(vWeekStartDay)));
 LET v2YearStart = Num(MonthStart(AddMonths(Today(), -24)));
 
-SET vBSP_L1_Min     = 10;
-SET vBSP_L2_Min     = 20;
-SET vBSP_L3_Min     = 30;
-SET vMinCoverage    = 0.5;
+SET vBSP_L1_Min        = 10;
+SET vBSP_L2_Min        = 20;
+SET vBSP_L3_Min        = 30;
+SET vMinCoverage       = 0.5;
+SET vBSP_DT_MinRunPct  = 0.40;   // DT% pool: exclude shifts where Run% < 40% of SchedHours
 
 SET vInsightQVDPath = 'lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/InsightRecord.qvd';
 SET vFactQVD        = 'lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - Facts.qvd';
@@ -396,6 +397,14 @@ WHERE RunHours > 2;
 
 DROP TABLE JobFact_Job_BSP_Agg;
 
+// DT%-only qualifying pool — stricter run-exposure floor applied to DT% BSP only
+JobFact_Job_DT_BSP:
+NoConcatenate
+LOAD
+    Plant, "WC Object ID", Die, RunHours, SchedHours, DownHours
+RESIDENT JobFact_Job_BSP
+WHERE SchedHours > 0 AND (RunHours / SchedHours) >= $(vBSP_DT_MinRunPct);
+
 
 // ============================================================
 // SECTION 11: QUALIFYING RUNS MAPPING TABLES
@@ -503,6 +512,15 @@ LOAD
 RESIDENT JobFact_Job_BSP_L2_Agg;
 
 DROP TABLE JobFact_Job_BSP_L2_Agg;
+
+// DT%-only qualifying pool (L2 grain) — board-attribute-aware stricter pool
+JobFact_Job_DT_BSP_L2:
+NoConcatenate
+LOAD
+    Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim,
+    RunHours, SchedHours, DownHours
+RESIDENT JobFact_Job_BSP_L2
+WHERE SchedHours > 0 AND (RunHours / SchedHours) >= $(vBSP_DT_MinRunPct);
 
 
 // ============================================================
@@ -897,6 +915,27 @@ NoConcatenate
 LOAD * RESIDENT BSP_Main_L1_Raw WHERE L1_RunCount >= $(vBSP_L1_Min);
 DROP TABLE BSP_Main_L1_Raw;
 
+// Patch L1 DT% BSP from the stricter run-exposure pool
+BSP_DT_L1_Raw:
+NoConcatenate
+LOAD
+    Plant, "WC Object ID", Die,
+    Count(1)                                                                             as L1_DT_RunCount,
+    FRACTILE(If(SchedHours > 0, DownHours / SchedHours, Null()), 0.1)                   as L1_BSP_DowntimePct_New
+RESIDENT JobFact_Job_DT_BSP
+GROUP BY Plant, "WC Object ID", Die;
+
+BSP_DT_L1:
+NoConcatenate
+LOAD Plant, "WC Object ID", Die, L1_BSP_DowntimePct_New
+RESIDENT BSP_DT_L1_Raw
+WHERE L1_DT_RunCount >= $(vBSP_L1_Min);
+DROP TABLE BSP_DT_L1_Raw;
+
+LEFT JOIN (BSP_Main_L1)
+LOAD Plant, "WC Object ID", Die, L1_BSP_DowntimePct_New RESIDENT BSP_DT_L1;
+DROP TABLE BSP_DT_L1;
+
 
 // ============================================================
 // SECTION 18: MAIN KPI BSP — LEVEL 2
@@ -932,6 +971,27 @@ NoConcatenate
 LOAD * RESIDENT BSP_Main_L2_Raw WHERE L2_RunCount >= $(vBSP_L2_Min);
 DROP TABLE BSP_Main_L2_Raw;
 
+// Patch L2 DT% BSP from the stricter run-exposure pool
+BSP_DT_L2_Raw:
+NoConcatenate
+LOAD
+    Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim,
+    Count(1)                                                                             as L2_DT_RunCount,
+    FRACTILE(If(SchedHours > 0, DownHours / SchedHours, Null()), 0.1)                   as L2_BSP_DowntimePct_New
+RESIDENT JobFact_Job_DT_BSP_L2
+GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim;
+
+BSP_DT_L2:
+NoConcatenate
+LOAD Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim, L2_BSP_DowntimePct_New
+RESIDENT BSP_DT_L2_Raw
+WHERE L2_DT_RunCount >= $(vBSP_L2_Min);
+DROP TABLE BSP_DT_L2_Raw;
+
+LEFT JOIN (BSP_Main_L2)
+LOAD Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim, L2_BSP_DowntimePct_New RESIDENT BSP_DT_L2;
+DROP TABLE BSP_DT_L2;
+
 
 // ============================================================
 // SECTION 19: MAIN KPI BSP — LEVEL 3
@@ -961,6 +1021,30 @@ BSP_Main_L3:
 NoConcatenate
 LOAD * RESIDENT BSP_Main_L3_Raw WHERE L3_RunCount >= $(vBSP_L3_Min);
 DROP TABLE BSP_Main_L3_Raw;
+
+// Patch L3 DT% BSP from the stricter run-exposure pool
+BSP_DT_L3_Raw:
+NoConcatenate
+LOAD
+    Plant, "WC Object ID",
+    Count(1)                                                                             as L3_DT_RunCount,
+    FRACTILE(If(SchedHours > 0, DownHours / SchedHours, Null()), 0.1)                   as L3_BSP_DowntimePct_New
+RESIDENT JobFact_Job_DT_BSP
+GROUP BY Plant, "WC Object ID";
+
+BSP_DT_L3:
+NoConcatenate
+LOAD Plant, "WC Object ID", L3_BSP_DowntimePct_New
+RESIDENT BSP_DT_L3_Raw
+WHERE L3_DT_RunCount >= $(vBSP_L3_Min);
+DROP TABLE BSP_DT_L3_Raw;
+
+LEFT JOIN (BSP_Main_L3)
+LOAD Plant, "WC Object ID", L3_BSP_DowntimePct_New RESIDENT BSP_DT_L3;
+DROP TABLE BSP_DT_L3;
+
+DROP TABLE JobFact_Job_DT_BSP;
+DROP TABLE JobFact_Job_DT_BSP_L2;
 
 
 // ============================================================
@@ -1398,7 +1482,7 @@ MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_NetThroughput
 RESIDENT BSP_Main_L1;
 
 BSP_L1_DTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_DowntimePct
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_DowntimePct_New
 RESIDENT BSP_Main_L1;
 
 BSP_L1_DTHrs_Map:
@@ -1436,7 +1520,7 @@ MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Bo
 RESIDENT BSP_Main_L2;
 
 BSP_L2_DTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_DowntimePct
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_DowntimePct_New
 RESIDENT BSP_Main_L2;
 
 BSP_L2_DTHrs_Map:
@@ -1474,7 +1558,7 @@ MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_NetThroughput
 RESIDENT BSP_Main_L3;
 
 BSP_L3_DTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_DowntimePct
+MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_DowntimePct_New
 RESIDENT BSP_Main_L3;
 
 BSP_L3_DTHrs_Map:
