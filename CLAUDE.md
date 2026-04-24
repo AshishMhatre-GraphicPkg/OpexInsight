@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Is
 
-A Qlik Sense load script (`April 20 at 7_39 PM.qvs`) that powers the **Folding Carton Actionable Intelligence Platform** — a weekly automated insight engine. It compares each machine's recent performance against its own **Best Shown Performance (BSP)** benchmark, scores the gap by size and trend urgency, and produces a ranked action list stored as a QVD on SharePoint.
+A Qlik Sense load script (`InsightOpexv1.qvs`) that powers the **Folding Carton Actionable Intelligence Platform** — a weekly automated insight engine. It compares each machine's recent performance against its own **Best Shown Performance (BSP)** benchmark, scores the gap by size and trend urgency, and produces a ranked action list stored as a QVD on SharePoint.
 
 There is no build system, no test runner, and no linter. Changes are made directly to the `.qvs` file and executed by reloading the Qlik Sense app.
 

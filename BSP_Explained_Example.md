@@ -12,7 +12,7 @@
 | Department | Sheetfed Printing (not Gluer/Window → uses OEM Speed) |
 | Dies run historically | Die A, Die B |
 | BSP window | Jan 1, 2025 → last completed week |
-| Current period | 2 most recent completed weeks |
+| Current period | 1 most recent completed week (Week −1) |
 
 ---
 
@@ -97,9 +97,9 @@ Interpolate: `value[12] + 0.6 × (value[13] − value[12]) = 95 + 0.6 × (95 −
 
 ---
 
-## PART 2 — Current 2-Week Period (3 runs)
+## PART 2 — Trend Window & Current 1-Week Period
 
-The machine ran **3 jobs** across the 2 most recent completed weeks:
+The machine ran **3 jobs** across the 2 most recent weeks. The **13-week trend window** captures all of them for streak and BSP computation. The **current period** is only **Week −1** (the single last completed week):
 
 | Run | Week | Die | SchedHrs | RunHrs | GoodQty | OEE_Denom (SchedHrs×MaxSpeed) |
 |---|---|---|---|---|---|---|
@@ -298,85 +298,103 @@ BSP_ConfScore     = 3.0  → HIGH
 
 ---
 
-### Step 2C — Current Period Aggregation (2-week average)
+### Step 2C — Current Period Aggregation (1-week: Week −1 only)
 
-`CurrentPeriod` is built from `WeeklyMachineBSP` filtered to the 2-week window, joined with `WeeklyMachineKPI_Sorted` (for actuals and streaks). The coverage spans **both weeks** using summed numerator and denominator:
+`CurrentPeriod` is built from `WeeklyMachineBSP` and `WeeklyMachineKPI_Sorted` filtered to **Week −1 only** (`v2WeekStart = vLastWeekStart`). Only Die A ran in Week −1, so there is no blending needed:
 
 ```
-Cur_OEE              = Avg(64.4%, 70.0%)                    = 67.2%
-Cur_Availability     = Avg(75.0%, 80.0%)                    = 77.5%
+Cur_OEE              = 70.0%   (Week −1 actuals only)
+Cur_Availability     = 80.0%
 
-Cur_BSP_OEE          = Avg(87.6%, 87.6%)                    = 87.6%
-Cur_BSP_Availability = Avg(95.0%, 95.0%)                    = 95.0%
+Cur_BSP_OEE          = 87.6%   (weighted BSP for Week −1)
+Cur_BSP_Availability = 95.0%
 
-Cur_SchedHours       = 16 + 10                              = 26 hrs   ← Sum of 2 weeks
+Cur_SchedHours       = Sum(Wk_SchedHours)  = 10 hrs   ← 1 week only
+Cur_RunHours         = Sum(Wk_RunHours)    = 8 hrs    ← used for Speed GapHrs
+Cur_SetupEventCount  = Sum(Wk_SetupCount)             ← used for Setup Hrs/Event GapHrs
 
-Cur_BSP_CoveragePct  = Sum(Wk_CoveredSchedHours)            = 10 + 10  = 20
-                     ÷ Sum(Wk_TotalSchedHours)              = 16 + 10  = 26
-                     = 20 ÷ 26                              = 76.9%    ← both weeks, not just last
+Cur_BSP_CoveragePct  = Sum(Wk_CoveredSchedHours)      = 10
+                     ÷ Sum(Wk_TotalSchedHours)         = 10
+                     = 10 ÷ 10                         = 100%   ← only Die A ran, all covered
 
-Cur_BSP_ConfScore    = Max(WeekStart = vLastWeekStart → BSP_ConfScore) = 3.0   ← last week's score only
+Cur_BSP_ConfScore    = 3.0  (last week's only)
 BSP_Confidence       = "HIGH"   ← ConfScore 3.0 ≥ 2.5 threshold
 ```
 
-> Coverage 76.9% > 50% threshold ✅ → Insight is allowed to fire
+> Coverage 100% > 50% threshold ✅ → Insight is allowed to fire
 
-> **Note on coverage vs confidence:** Coverage (76.9%) uses both weeks to reflect the true share of hours with a resolved BSP. ConfScore (3.0) uses only the most recent week — it answers "how reliable is the benchmark right now?", not "how much of the machine's time was covered overall?"
+> **Note:** `v2WeekStart = vLastWeekStart` (both set to `-1`). Despite the variable name containing "2", the current period is exactly **1 week**. This is intentional — the name is a legacy artifact.
 
 ---
 
 ## PART 3 — Scoring the Insight
 
-### Gap Score (0–100, weight 70%)
+### Step 1 — Gap_Pct (relative gap, display only)
 
-OEE is higher-is-better: `Gap = (BSP − Actual) ÷ BSP × 100`
-
-```
-OEE Gap          = (87.6% − 67.2%) ÷ 87.6% × 100   = 23.3  → Gap_Score = 23.3
-Availability Gap = (95.0% − 77.5%) ÷ 95.0% × 100   = 18.4  → Gap_Score = 18.4
-```
-
-### Trend Score (0–100, weight 30%)
-
-Assume the machine's OEE has been declining 3 consecutive weeks:
-```
-Streak_4wk   = Min(3, 4)   = 3
-Streak_13wk  = 3
-
-Trend_Score  = Min(100, ((3 + 3) ÷ 2) ÷ 4 × 100)   = Min(100, 75) = 75.0
-```
-
-### Composite Score
+OEE is higher-is-better: `Gap_Pct = (BSP − Actual) ÷ BSP × 100`
 
 ```
-OEE Composite       = 23.3 × 0.70 + 75.0 × 0.30   = 16.3 + 22.5  = 38.8
-Availability Composite = 18.4 × 0.70 + 75.0 × 0.30 = 12.9 + 22.5 = 35.4
+OEE Gap_Pct          = (87.6% − 70.0%) ÷ 87.6% × 100   = 20.1
+Availability Gap_Pct = (95.0% − 80.0%) ÷ 95.0% × 100   = 15.8
 ```
+
+`Gap_Pct` is for display in the front-end only — it is not used in scoring.
+
+### Step 2 — GapHrs (true scheduled hours lost, computed in Section 42)
+
+For percentage-based KPIs: `GapHrs = (BSP − Actual) × Cur_SchedHours`
+
+```
+OEE GapHrs          = (87.6% − 70.0%) × 10   = 0.176 × 10   = 1.76 hrs
+Availability GapHrs = (95.0% − 80.0%) × 10   = 0.150 × 10   = 1.50 hrs
+```
+
+> These represent the scheduled hours the machine "lost" vs its proven best — if the machine had hit its OEE BSP this week, it would have produced ~1.76 additional hours' worth of good output.
+
+### Step 3 — OEE_Impact (hours lost + urgency weighting, Section 43)
+
+Assume the machine's OEE has been below BSP for 3 consecutive weeks: `Streak_4wk = 3`
+
+```
+OEE_Impact      = Round(GapHrs × (1 + RangeMin(Streak_4wk, 4) / 4), 0.01)
+
+OEE:
+  = Round(1.76 × (1 + 3/4), 0.01)
+  = Round(1.76 × 1.75, 0.01)
+  = 3.08 hrs
+
+Availability:
+  = Round(1.50 × 1.75, 0.01)
+  = 2.63 hrs
+```
+
+The streak multiplier (`1 + Streak/4`, max `1 + 4/4 = 1.75×`) adds urgency for persistent problems. A machine missing OEE BSP for 4+ weeks gets a 75% uplift over a one-time miss, reflecting the compounding cost of a sustained gap.
 
 ---
 
 ## PART 4 — Final InsightRecords Row (OEE)
 
-| Field | Value |
-|---|---|
-| Insight_ID | `0008\|10005999\|2025-04-07\|OEE` |
-| Plant | 0008 |
-| WC Object ID | 10005999 |
-| Plant - WC | Carol Stream - 10005999 |
-| KPI_Name | OEE |
-| Period_Start | 2025-04-07 |
-| Cur_Actual | **67.2%** |
-| BSP_Benchmark | **87.6%** |
-| Gap_Pct | 23.3 |
-| Gap_Score | 23.3 |
-| Streak_4wk | 3 |
-| Streak_13wk | 3 |
-| Trend_Score | 75.0 |
-| **Composite_Score** | **38.8** |
-| Cur_SchedHours | 26 hrs |
-| Cur_BSP_CoveragePct | 76.9% |
-| BSP_Confidence | HIGH |
-| Insight_Rank | (ranked within Plant 0008 by Composite_Score DESC) |
+| Field | Value | Notes |
+|---|---|---|
+| Insight_ID | `0008\|10005999\|2025-04-14\|OEE` | Plant\|WC\|PeriodStart\|KPIName — stable key |
+| Plant | 0008 | |
+| WC Object ID | 10005999 | |
+| Plant - WC | Carol Stream - 10005999 | |
+| Department | Sheetfed Printing | |
+| KPI_Name | OEE | |
+| Reasons | Null() | Main KPI rows have no Reason; only Reason rows carry this |
+| Period_Start | 2025-04-14 | Start of Week −1 (the 1-week current period) |
+| Cur_Actual | **0.700** | 70.0% — raw decimal for calculations |
+| BSP_Benchmark | **0.876** | 87.6% |
+| Cur_Actual_Fmt | **70.00%** | `Num(0.700, '0.00%')` |
+| BSP_Benchmark_Fmt | **87.60%** | `Num(0.876, '0.00%')` |
+| Gap_Pct | **20.1** | (BSP−Actual)/BSP×100 — relative display only |
+| Streak_4wk | **3** | 3 of last 4 weeks below BSP |
+| **OEE_Impact** | **3.08** | Hours lost vs BSP, urgency-weighted |
+| Cur_BSP_CoveragePct | **1.000** | 100% — all Week −1 hours had a resolved BSP |
+| Cur_BSP_ConfScore | **3.0** | HIGH (L1 BSP resolved for Die A) |
+| BSP_Confidence | **HIGH** | ConfScore ≥ 2.5 |
+| Insight_Rank | (ranked within Plant 0008 by OEE_Impact DESC) | |
 
 ---
 
@@ -390,7 +408,7 @@ Availability Composite = 18.4 × 0.70 + 75.0 × 0.30 = 12.9 + 22.5 = 35.4
 
 4. **Coverage matters** — Die B's 6 hours of SchedHours in Week −2 were "uncovered," pulling coverage to 62.5% that week. Had that been the last week, and if the machine ran Die B more, coverage could drop below 50% and suppress the insight entirely.
 
-5. **BSP_CoveragePct = 76.9% here** (20 covered hrs ÷ 26 total hrs across both weeks). Die B's 6 uncovered hours in Week −2 reduce coverage below 100%. Had coverage dropped below 50%, the insight would have been suppressed entirely. BSP_Confidence = HIGH because it uses only the most recent week's ConfScore (3.0), not the coverage-weighted score.
+5. **BSP_CoveragePct = 100% here** — only Die A ran in Week −1 and it has a resolved L1 BSP (10 covered ÷ 10 total hrs). Had the machine also run Die B in Week −1 (which has no BSP at any level), coverage would have dropped below 100% and could potentially fall below 50%, suppressing the insight entirely. BSP_Confidence = HIGH because Die A's ConfScore = 3.0 ≥ 2.5.
 
 ---
 
@@ -479,14 +497,15 @@ This shows how data flows from raw fact rows through to `InsightRecords`, what g
              │               ▼
              │   ╔═══════════════════════════════════╗
              │   ║  CurrentPeriod  (Section 37)       ║
-             │   ║  Grain: Plant+WC  (2-week summary) ║
+             │   ║  Grain: Plant+WC  (1-week: Week−1) ║
              │   ║                                    ║
-             │   ║  Cur_OEE      = Avg(Wk_OEE)        ║
-             │   ║  Cur_BSP_OEE  = Avg(Wk_BSP_OEE)   ║
-             │   ║  Cur_SchedHrs = Sum(Wk_SchedHrs)   ║
-             │   ║  Cur_Coverage = Sum(Covered)÷       ║
-             │   ║                 Sum(Total) ← both   ║
-             │   ║                 weeks               ║
+             │   ║  Cur_OEE           = Wk_OEE        ║
+             │   ║  Cur_BSP_OEE       = Wk_BSP_OEE   ║
+             │   ║  Cur_SchedHrs      = Sum(Wk_SchedHrs) ║
+             │   ║  Cur_RunHours      = Sum(Wk_RunHrs)║
+             │   ║  Cur_SetupEventCnt = Sum(Wk_SetupCnt) ║
+             │   ║  Cur_Coverage = Covered÷Total      ║
+             │   ║                 (1 week only)       ║
              │   ║  Cur_ConfScore = last week's only   ║
              │   ╚═══════════════╦═══════════════════╝
              │                   │
@@ -500,8 +519,9 @@ This shows how data flows from raw fact rows through to `InsightRecords`, what g
                  ║  Grain: Plant+WC+KPI_Name         ║
                  ║  (one row per machine per KPI)    ║
                  ║                                   ║
-                 ║  Composite = Gap×0.7 + Trend×0.3  ║
-                 ║  Ranked by Composite DESC         ║
+                 ║  GapHrs = abs_gap × time_denom    ║
+                 ║  OEE_Impact = GapHrs×(1+Streak/4) ║
+                 ║  Ranked by OEE_Impact DESC        ║
                  ║  within Plant                     ║
                  ╚═══════════════════════════════════╝
 ```
@@ -522,15 +542,16 @@ This shows how data flows from raw fact rows through to `InsightRecords`, what g
 | `WeeklyDieBSP` | WeekStart + Plant + WC + Die | Actual + BSP resolved per die — coverage and confidence assigned here |
 | `WeeklyMachineBSP` | WeekStart + Plant + WC | BSP and coverage rolled to machine level — weighted by SchedHours |
 | `WeeklyMachineKPI` | WeekStart + Plant + WC | Actual weekly KPI per machine — streak computed via Peek() on this table |
-| `CurrentPeriod` | Plant + WC | 2-week average actuals + BSP — the comparison happens here |
-| `InsightRecords` | Plant + WC + KPI_Name (+ ReasonKey for reason insights) | Final output — one row per machine per KPI that fires |
+| `CurrentPeriod` | Plant + WC | 1-week actuals + BSP (last completed week only) — the comparison happens here |
+| `InsightRecords` | Plant + WC + KPI_Name + Reasons | Final output — one row per machine per KPI/reason that fires; `Reasons` is Null for main KPI rows |
 
 ### How BSP and Current Period Match
 
 The BSP is calculated at **die grain** (L1) or **board type grain** (L2) or **machine grain** (L3). The current period actual is always at **machine grain** (WeekStart + Plant + WC after `WeeklyMachineKPI` aggregation). The bridge between the two is:
 
-1. BSP is resolved per die (in `WeeklyDieBSP`) using the die that **actually ran in the current period**
-2. Those per-die BSPs are weighted together into a single machine-level BSP (in `WeeklyMachineBSP`) using the **same period's SchedHours as weights**
-3. The weighted BSP is then compared to the actual machine-level KPI (in `CurrentPeriod`)
+1. BSP is resolved per die (in `WeeklyDieBSP`) using the dies that **actually ran in the last completed week**
+2. Those per-die BSPs are weighted together into a single machine-level BSP (in `WeeklyMachineBSP`) using the **same week's SchedHours as weights**
+3. The weighted BSP from Week −1 is carried into `CurrentPeriod` and compared to the actual machine-level KPI for that same week
+4. `GapHrs = (BSP − Actual) × Cur_SchedHours` converts the percentage gap into true scheduled hours lost, which is then urgency-weighted by streak to produce `OEE_Impact`
 
-This ensures the benchmark always reflects the specific product mix the machine ran — not a generic machine average.
+This ensures the benchmark always reflects the specific product mix the machine ran — not a generic machine average. And `OEE_Impact` expresses the loss as actual hours, so plant leaders can compare rows directly.
