@@ -85,7 +85,7 @@ Per-reason `Streak_4wk` (range 0–4) is the count of weeks in the last 4 full w
 
 ### Step 6 — Insight Records, Scoring, Store (Sections 42–48)
 
-- **Section 42:** `InsightRecords_Raw` — 9 `LOAD` blocks (one per KPI: OEE, Availability, Performance, Quality, Speed, Downtime %, Scrap Rate, Setup Hrs/Event, Setup Time %) with `Concatenate`. Insight fires when `Cur_Actual` is worse than `BSP_Benchmark` **AND** `Cur_BSP_CoveragePct > 0.5`. Each block emits `Gap_Pct` and `Streak_4wk` (`RangeMin(Streak_X, 4)`). Percentage KPIs format `Cur_Actual_Fmt` / `BSP_Benchmark_Fmt` with `Num(..., '0.00%')`. **Ratio / absolute KPIs (Speed, Setup Hrs/Event) pass the raw numeric through unchanged** so front-end formatting controls display.
+- **Section 42:** `InsightRecords_Raw` — 9 `LOAD` blocks (one per KPI: OEE, Availability, Performance, Quality, Speed, Downtime %, Scrap Rate, Setup Hrs/Event, Setup Time %) with `Concatenate`. Insight fires when `Cur_Actual` is worse than `BSP_Benchmark` **AND** `Cur_BSP_CoveragePct > 0.5`. Each block emits `Gap_Pct`, `GapHrs`, `Streak_4wk` (`RangeMin(Streak_X, 4)`), and **`KPI_Category`** (`'Outcome'` or `'Lever'`). Percentage KPIs format `Cur_Actual_Fmt` / `BSP_Benchmark_Fmt` with `Num(..., '0.00%')`. **Ratio / absolute KPIs (Speed, Setup Hrs/Event) pass the raw numeric through unchanged** so front-end formatting controls display.
 - **Section 43:** Unified scoring. `OEE_Impact = Round(GapHrs × (1 + Streak_4wk/4), 0.01)` where `GapHrs` is the true absolute scheduled-hours loss computed per-KPI in Section 42:
   - **Pct-based KPIs** (OEE, Availability, Performance, Quality, Downtime %, Scrap Rate, Setup Time %): `GapHrs = (BSP − Actual) × Cur_SchedHours` (absolute gap × hours, not relative gap)
   - **Speed**: `GapHrs = (BSP_Speed − Cur_Speed) / BSP_Speed × Cur_RunHours` (speed deficit fraction × run-hours)
@@ -101,7 +101,7 @@ Per-reason `Streak_4wk` (range 0–4) is the count of weeks in the last 4 full w
 **Final `InsightRecords` schema** (both main + reason rows):
 ```
 Insight_ID, Plant, WC Object ID, Plant - WC, Department, Period_Start,
-KPI_Name, Reasons, Cur_Actual, BSP_Benchmark, Cur_Actual_Fmt, BSP_Benchmark_Fmt,
+KPI_Name, KPI_Category, Reasons, Cur_Actual, BSP_Benchmark, Cur_Actual_Fmt, BSP_Benchmark_Fmt,
 Gap_Pct, Streak_4wk, OEE_Impact,
 Cur_BSP_CoveragePct, Cur_BSP_ConfScore, BSP_Confidence, Insight_Rank
 ```
@@ -122,6 +122,7 @@ Reason rows have `Cur_BSP_CoveragePct / Cur_BSP_ConfScore / BSP_Confidence = Nul
 | Department-specific L2 grain via `L2_ExtraDim` | A single derived column collapses three grain variants (empty / CartonStyle / NumberUp) into one field, avoiding three parallel L2 pipelines. All 12 L2 BSP tables and their mapping keys include this field — empty string for default departments means existing behaviour is preserved for Web/Sheetfed Printing/Other with no separate code path. |
 | `Only()` for string fields in aggregations, `Max()` for numerics | `Max()` on a text field in Qlik returns NULL. `Only()` returns the value if the group contains exactly one distinct value (else NULL, which acts as a data-quality signal). Used for `CartonStyle` everywhere it is aggregated. `NumberUp` is numeric so `Max()` is correct. |
 | `OEE_Impact` is true hours lost vs BSP | All KPIs now use absolute-gap × time-denominator; `Gap_Pct` keeps the relative display. Scoring numbers were wrong units — plant leaders read `OEE_Impact` as hours. |
+| `KPI_Category` splits Outcome from Lever | `'Outcome'`: OEE, Availability, Quality, Downtime %, Scrap Rate (composite KPIs, not directly fixable). `'Lever'`: everything else (Performance, Speed, Setup Hrs/Event, Setup Time %, all Reasons, all Feeder/Blanket). Rationale: flat ranking by `OEE_Impact` was always dominated by Outcome KPIs. Front-end filters `KPI_Category = 'Lever'` to produce the weekly action list; Outcome rows remain for scorecard context. Both categories are stored in `InsightRecords`. |
 | `Cur_BSP_CoveragePct` is 1-week coverage | `Sum(CoveredSchedHours) / Sum(TotalSchedHours)` over the single current week (`v2WeekStart = vLastWeekStart`). |
 | Coverage threshold is strict `> 0.5` | Not `>= 0.5`. Exactly 50% coverage does not pass. |
 | `Cur_SchedHours = Sum(Wk_SchedHours)` | Represents total scheduled hours for the 1-week current period. `Avg` was incorrect. |
