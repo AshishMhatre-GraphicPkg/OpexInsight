@@ -30,11 +30,10 @@ LET v4WeekStart       = Num(WeekStart(Today(),  -4, $(vWeekStartDay)));
 LET v13WeekStart      = Num(WeekStart(Today(), -13, $(vWeekStartDay)));
 LET v2YearStart = Num(MonthStart(AddMonths(Today(), -24)));
 
-SET vBSP_L1_Min        = 10;
-SET vBSP_L2_Min        = 20;
-SET vBSP_L3_Min        = 30;
+SET vBSP_L1_Min        = 15;
+SET vBSP_L2_Min        = 25;
+SET vBSP_L3_Min        = 35;
 SET vMinCoverage       = 0.5;
-SET vBSP_DT_MinRunPct  = 0.40;   // DT% pool: exclude shifts where Run% < 40% of SchedHours
 
 SET vInsightQVDPath = 'lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/InsightRecord.qvd';
 SET vFactQVD        = 'lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - Facts.qvd';
@@ -395,15 +394,9 @@ LOAD
 RESIDENT JobFact_Job_BSP_Agg
 WHERE RunHours > 2;
 
-DROP TABLE JobFact_Job_BSP_Agg;
+///// Remove below part Later 
 
-// DT%-only qualifying pool — stricter run-exposure floor applied to DT% BSP only
-JobFact_Job_DT_BSP:
-NoConcatenate
-LOAD
-    Plant, "WC Object ID", Die, RunHours, SchedHours, DownHours
-RESIDENT JobFact_Job_BSP
-WHERE SchedHours > 0 AND (RunHours / SchedHours) >= $(vBSP_DT_MinRunPct);
+DROP TABLE JobFact_Job_BSP_Agg;
 
 
 // ============================================================
@@ -512,15 +505,6 @@ LOAD
 RESIDENT JobFact_Job_BSP_L2_Agg;
 
 DROP TABLE JobFact_Job_BSP_L2_Agg;
-
-// DT%-only qualifying pool (L2 grain) — board-attribute-aware stricter pool
-JobFact_Job_DT_BSP_L2:
-NoConcatenate
-LOAD
-    Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim,
-    RunHours, SchedHours, DownHours
-RESIDENT JobFact_Job_BSP_L2
-WHERE SchedHours > 0 AND (RunHours / SchedHours) >= $(vBSP_DT_MinRunPct);
 
 
 // ============================================================
@@ -898,15 +882,15 @@ LOAD
     "WC Object ID",
     Die,
     Count(1)                                                                                    as L1_RunCount,
-    FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.9)                  as L1_BSP_OEE,
-    FRACTILE(If(SchedHours   > 0, RunHours      / SchedHours,   Null()), 0.9)                  as L1_BSP_Availability,
-    FRACTILE(If(Perf_Denom   > 0, TotalQty_OEE / Perf_Denom,   Null()), 0.9)                  as L1_BSP_Performance,
-    FRACTILE(If(TotalQty_OEE > 0, GoodQty_OEE  / TotalQty_OEE, Null()), 0.9)                  as L1_BSP_Quality,
-    FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.9)                  as L1_BSP_Speed,
-    FRACTILE(If(RunHours + DownHours > 0, GoodQty_OEE / (RunHours + DownHours), Null()), 0.9) as L1_BSP_NetThroughput,
-    FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.1)                  as L1_BSP_DowntimePct,
-    FRACTILE(DownHours,                                                   0.1)                  as L1_BSP_DowntimeHrs,
-    FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.1)                  as L1_BSP_ScrapRate
+    FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.75)                  as L1_BSP_OEE,
+    FRACTILE(If(SchedHours   > 0, RunHours      / SchedHours,   Null()), 0.75)                  as L1_BSP_Availability,
+    FRACTILE(If(Perf_Denom   > 0, TotalQty_OEE / Perf_Denom,   Null()), 0.75)                  as L1_BSP_Performance,
+    FRACTILE(If(TotalQty_OEE > 0, GoodQty_OEE  / TotalQty_OEE, Null()), 0.75)                  as L1_BSP_Quality,
+    FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.75)                  as L1_BSP_Speed,
+    FRACTILE(If(RunHours + DownHours > 0, GoodQty_OEE / (RunHours + DownHours), Null()), 0.75) as L1_BSP_NetThroughput,
+    FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.25)                  as L1_BSP_DowntimePct,
+    FRACTILE(DownHours,                                                   0.25)                  as L1_BSP_DowntimeHrs,
+    FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.25)                  as L1_BSP_ScrapRate
 RESIDENT JobFact_Job_BSP
 GROUP BY Plant, "WC Object ID", Die;
 
@@ -914,27 +898,6 @@ BSP_Main_L1:
 NoConcatenate
 LOAD * RESIDENT BSP_Main_L1_Raw WHERE L1_RunCount >= $(vBSP_L1_Min);
 DROP TABLE BSP_Main_L1_Raw;
-
-// Patch L1 DT% BSP from the stricter run-exposure pool
-BSP_DT_L1_Raw:
-NoConcatenate
-LOAD
-    Plant, "WC Object ID", Die,
-    Count(1)                                                                             as L1_DT_RunCount,
-    FRACTILE(If(SchedHours > 0, DownHours / SchedHours, Null()), 0.1)                   as L1_BSP_DowntimePct_New
-RESIDENT JobFact_Job_DT_BSP
-GROUP BY Plant, "WC Object ID", Die;
-
-BSP_DT_L1:
-NoConcatenate
-LOAD Plant, "WC Object ID", Die, L1_BSP_DowntimePct_New
-RESIDENT BSP_DT_L1_Raw
-WHERE L1_DT_RunCount >= $(vBSP_L1_Min);
-DROP TABLE BSP_DT_L1_Raw;
-
-LEFT JOIN (BSP_Main_L1)
-LOAD Plant, "WC Object ID", Die, L1_BSP_DowntimePct_New RESIDENT BSP_DT_L1;
-DROP TABLE BSP_DT_L1;
 
 
 // ============================================================
@@ -953,15 +916,15 @@ LOAD
     "Board Caliper",
     L2_ExtraDim,
     Count(1)                                                                                    as L2_RunCount,
-    FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.9)                  as L2_BSP_OEE,
-    FRACTILE(If(SchedHours   > 0, RunHours      / SchedHours,   Null()), 0.9)                  as L2_BSP_Availability,
-    FRACTILE(If(Perf_Denom   > 0, TotalQty_OEE / Perf_Denom,   Null()), 0.9)                  as L2_BSP_Performance,
-    FRACTILE(If(TotalQty_OEE > 0, GoodQty_OEE  / TotalQty_OEE, Null()), 0.9)                  as L2_BSP_Quality,
-    FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.9)                  as L2_BSP_Speed,
-    FRACTILE(If(RunHours + DownHours > 0, GoodQty_OEE / (RunHours + DownHours), Null()), 0.9) as L2_BSP_NetThroughput,
-    FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.1)                  as L2_BSP_DowntimePct,
-    FRACTILE(DownHours,                                                   0.1)                  as L2_BSP_DowntimeHrs,
-    FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.1)                  as L2_BSP_ScrapRate
+    FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.75)                  as L2_BSP_OEE,
+    FRACTILE(If(SchedHours   > 0, RunHours      / SchedHours,   Null()), 0.75)                  as L2_BSP_Availability,
+    FRACTILE(If(Perf_Denom   > 0, TotalQty_OEE / Perf_Denom,   Null()), 0.75)                  as L2_BSP_Performance,
+    FRACTILE(If(TotalQty_OEE > 0, GoodQty_OEE  / TotalQty_OEE, Null()), 0.75)                  as L2_BSP_Quality,
+    FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.75)                  as L2_BSP_Speed,
+    FRACTILE(If(RunHours + DownHours > 0, GoodQty_OEE / (RunHours + DownHours), Null()), 0.75) as L2_BSP_NetThroughput,
+    FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.25)                  as L2_BSP_DowntimePct,
+    FRACTILE(DownHours,                                                   0.25)                  as L2_BSP_DowntimeHrs,
+    FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.25)                  as L2_BSP_ScrapRate
 RESIDENT JobFact_Job_BSP_L2
 WHERE Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
 GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim;
@@ -970,27 +933,6 @@ BSP_Main_L2:
 NoConcatenate
 LOAD * RESIDENT BSP_Main_L2_Raw WHERE L2_RunCount >= $(vBSP_L2_Min);
 DROP TABLE BSP_Main_L2_Raw;
-
-// Patch L2 DT% BSP from the stricter run-exposure pool
-BSP_DT_L2_Raw:
-NoConcatenate
-LOAD
-    Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim,
-    Count(1)                                                                             as L2_DT_RunCount,
-    FRACTILE(If(SchedHours > 0, DownHours / SchedHours, Null()), 0.1)                   as L2_BSP_DowntimePct_New
-RESIDENT JobFact_Job_DT_BSP_L2
-GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim;
-
-BSP_DT_L2:
-NoConcatenate
-LOAD Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim, L2_BSP_DowntimePct_New
-RESIDENT BSP_DT_L2_Raw
-WHERE L2_DT_RunCount >= $(vBSP_L2_Min);
-DROP TABLE BSP_DT_L2_Raw;
-
-LEFT JOIN (BSP_Main_L2)
-LOAD Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim, L2_BSP_DowntimePct_New RESIDENT BSP_DT_L2;
-DROP TABLE BSP_DT_L2;
 
 
 // ============================================================
@@ -1005,15 +947,15 @@ LOAD
     Plant,
     "WC Object ID",
     Count(1)                                                                                    as L3_RunCount,
-    FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.9)                  as L3_BSP_OEE,
-    FRACTILE(If(SchedHours   > 0, RunHours      / SchedHours,   Null()), 0.9)                  as L3_BSP_Availability,
-    FRACTILE(If(Perf_Denom   > 0, TotalQty_OEE / Perf_Denom,   Null()), 0.9)                  as L3_BSP_Performance,
-    FRACTILE(If(TotalQty_OEE > 0, GoodQty_OEE  / TotalQty_OEE, Null()), 0.9)                  as L3_BSP_Quality,
-    FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.9)                  as L3_BSP_Speed,
-    FRACTILE(If(RunHours + DownHours > 0, GoodQty_OEE / (RunHours + DownHours), Null()), 0.9) as L3_BSP_NetThroughput,
-    FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.1)                  as L3_BSP_DowntimePct,
-    FRACTILE(DownHours,                                                   0.1)                  as L3_BSP_DowntimeHrs,
-    FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.1)                  as L3_BSP_ScrapRate
+    FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.75)                  as L3_BSP_OEE,
+    FRACTILE(If(SchedHours   > 0, RunHours      / SchedHours,   Null()), 0.75)                  as L3_BSP_Availability,
+    FRACTILE(If(Perf_Denom   > 0, TotalQty_OEE / Perf_Denom,   Null()), 0.75)                  as L3_BSP_Performance,
+    FRACTILE(If(TotalQty_OEE > 0, GoodQty_OEE  / TotalQty_OEE, Null()), 0.75)                  as L3_BSP_Quality,
+    FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.75)                  as L3_BSP_Speed,
+    FRACTILE(If(RunHours + DownHours > 0, GoodQty_OEE / (RunHours + DownHours), Null()), 0.75) as L3_BSP_NetThroughput,
+    FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.25)                  as L3_BSP_DowntimePct,
+    FRACTILE(DownHours,                                                   0.25)                  as L3_BSP_DowntimeHrs,
+    FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.25)                  as L3_BSP_ScrapRate
 RESIDENT JobFact_Job_BSP
 GROUP BY Plant, "WC Object ID";
 
@@ -1021,30 +963,6 @@ BSP_Main_L3:
 NoConcatenate
 LOAD * RESIDENT BSP_Main_L3_Raw WHERE L3_RunCount >= $(vBSP_L3_Min);
 DROP TABLE BSP_Main_L3_Raw;
-
-// Patch L3 DT% BSP from the stricter run-exposure pool
-BSP_DT_L3_Raw:
-NoConcatenate
-LOAD
-    Plant, "WC Object ID",
-    Count(1)                                                                             as L3_DT_RunCount,
-    FRACTILE(If(SchedHours > 0, DownHours / SchedHours, Null()), 0.1)                   as L3_BSP_DowntimePct_New
-RESIDENT JobFact_Job_DT_BSP
-GROUP BY Plant, "WC Object ID";
-
-BSP_DT_L3:
-NoConcatenate
-LOAD Plant, "WC Object ID", L3_BSP_DowntimePct_New
-RESIDENT BSP_DT_L3_Raw
-WHERE L3_DT_RunCount >= $(vBSP_L3_Min);
-DROP TABLE BSP_DT_L3_Raw;
-
-LEFT JOIN (BSP_Main_L3)
-LOAD Plant, "WC Object ID", L3_BSP_DowntimePct_New RESIDENT BSP_DT_L3;
-DROP TABLE BSP_DT_L3;
-
-DROP TABLE JobFact_Job_DT_BSP;
-DROP TABLE JobFact_Job_DT_BSP_L2;
 
 
 // ============================================================
@@ -1063,8 +981,8 @@ LOAD
     Die,
     MROClass,
     Count(1)                                                                                    as L1_SetupRunCount,
-    FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.1)                      as L1_BSP_SetupHrsPerEvent,
-    FRACTILE(If(SchedHours   > 0, SetupHours / SchedHours,  Null()), 0.1)                      as L1_BSP_SetupTimePct
+    FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.25)                      as L1_BSP_SetupHrsPerEvent,
+    FRACTILE(If(SchedHours   > 0, SetupHours / SchedHours,  Null()), 0.25)                      as L1_BSP_SetupTimePct
 RESIDENT JobFact_Job_BSP
 WHERE SetupCount > 0 AND Not IsNull(MROClass)
 GROUP BY Plant, "WC Object ID", Die, MROClass;
@@ -1092,8 +1010,8 @@ LOAD
     L2_ExtraDim,
     MROClass,
     Count(1)                                                                                    as L2_SetupRunCount,
-    FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.1)                      as L2_BSP_SetupHrsPerEvent,
-    FRACTILE(If(SchedHours   > 0, SetupHours / SchedHours,  Null()), 0.1)                      as L2_BSP_SetupTimePct
+    FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.25)                      as L2_BSP_SetupHrsPerEvent,
+    FRACTILE(If(SchedHours   > 0, SetupHours / SchedHours,  Null()), 0.25)                      as L2_BSP_SetupTimePct
 RESIDENT JobFact_Job_BSP_L2
 WHERE SetupCount > 0
     AND Not IsNull(MROClass)
@@ -1120,8 +1038,8 @@ LOAD
     "WC Object ID",
     MROClass,
     Count(1)                                                                                    as L3_SetupRunCount,
-    FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.1)                      as L3_BSP_SetupHrsPerEvent,
-    FRACTILE(If(SchedHours   > 0, SetupHours / SchedHours,  Null()), 0.1)                      as L3_BSP_SetupTimePct
+    FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.25)                      as L3_BSP_SetupHrsPerEvent,
+    FRACTILE(If(SchedHours   > 0, SetupHours / SchedHours,  Null()), 0.25)                      as L3_BSP_SetupTimePct
 RESIDENT JobFact_Job_BSP
 WHERE SetupCount > 0 AND Not IsNull(MROClass)
 GROUP BY Plant, "WC Object ID", MROClass;
@@ -1152,7 +1070,7 @@ LOAD
     Die,
     "Time Plant Reason Key",
     Count(1)                                                                                    as L1_DwnRsnCount,
-    FRACTILE(If(SchedHours   > 0, ReasonDownHours / SchedHours, Null()), 0.1)                  as L1_BSP_ReasonDownPct
+    FRACTILE(If(SchedHours   > 0, ReasonDownHours / SchedHours, Null()), 0.25)                  as L1_BSP_ReasonDownPct
 RESIDENT JobFact_DownReason_BSP
 GROUP BY Plant, "WC Object ID", Die, "Time Plant Reason Key";
 
@@ -1179,7 +1097,7 @@ LOAD
     L2_ExtraDim,
     "Time Plant Reason Key",
     Count(1)                                                                                    as L2_DwnRsnCount,
-    FRACTILE(If(SchedHours   > 0, ReasonDownHours / SchedHours, Null()), 0.1)                  as L2_BSP_ReasonDownPct
+    FRACTILE(If(SchedHours   > 0, ReasonDownHours / SchedHours, Null()), 0.25)                  as L2_BSP_ReasonDownPct
 RESIDENT JobFact_DownReason_BSP
 WHERE Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
 GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim, "Time Plant Reason Key";
@@ -1203,7 +1121,7 @@ LOAD
     "WC Object ID",
     "Time Plant Reason Key",
     Count(1)                                                                                    as L3_DwnRsnCount,
-    FRACTILE(If(SchedHours   > 0, ReasonDownHours / SchedHours, Null()), 0.1)                  as L3_BSP_ReasonDownPct
+    FRACTILE(If(SchedHours   > 0, ReasonDownHours / SchedHours, Null()), 0.25)                  as L3_BSP_ReasonDownPct
 RESIDENT JobFact_DownReason_BSP
 GROUP BY Plant, "WC Object ID", "Time Plant Reason Key";
 
@@ -1232,7 +1150,7 @@ LOAD
     Die,
     "Scrap Plant Reason Key",
     Count(1)                                                                                    as L1_ScrRsnCount,
-    FRACTILE(If(TotalQty_OEE > 0, ReasonScrapQty / TotalQty_OEE, Null()), 0.1)                as L1_BSP_ReasonScrapPct
+    FRACTILE(If(TotalQty_OEE > 0, ReasonScrapQty / TotalQty_OEE, Null()), 0.25)                as L1_BSP_ReasonScrapPct
 RESIDENT JobFact_ScrapReason_BSP
 GROUP BY Plant, "WC Object ID", Die, "Scrap Plant Reason Key";
 
@@ -1259,7 +1177,7 @@ LOAD
     L2_ExtraDim,
     "Scrap Plant Reason Key",
     Count(1)                                                                                    as L2_ScrRsnCount,
-    FRACTILE(If(TotalQty_OEE > 0, ReasonScrapQty / TotalQty_OEE, Null()), 0.1)                as L2_BSP_ReasonScrapPct
+    FRACTILE(If(TotalQty_OEE > 0, ReasonScrapQty / TotalQty_OEE, Null()), 0.25)                as L2_BSP_ReasonScrapPct
 RESIDENT JobFact_ScrapReason_BSP
 WHERE Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
 GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim, "Scrap Plant Reason Key";
@@ -1283,7 +1201,7 @@ LOAD
     "WC Object ID",
     "Scrap Plant Reason Key",
     Count(1)                                                                                    as L3_ScrRsnCount,
-    FRACTILE(If(TotalQty_OEE > 0, ReasonScrapQty / TotalQty_OEE, Null()), 0.1)                as L3_BSP_ReasonScrapPct
+    FRACTILE(If(TotalQty_OEE > 0, ReasonScrapQty / TotalQty_OEE, Null()), 0.25)                as L3_BSP_ReasonScrapPct
 RESIDENT JobFact_ScrapReason_BSP
 GROUP BY Plant, "WC Object ID", "Scrap Plant Reason Key";
 
@@ -1313,9 +1231,9 @@ LOAD
     "WC Object ID",
     Die,
     Count(1)                                                                                      as Fdr_L1_Count,
-    FRACTILE(If(SchedHours > 0, FeederDownHours / SchedHours, Null()), 0.1)                      as L1_BSP_FeederDTPct,
-    FRACTILE(If(SchedHours > 0, FeederDownCount / SchedHours, Null()), 0.1)                      as L1_BSP_FeederCntRate,
-    FRACTILE(If(TotalQty_OEE > 0, FeederDownCount / TotalQty_OEE * 10000, Null()), 0.1)         as L1_BSP_FeederPer10K
+    FRACTILE(If(SchedHours > 0, FeederDownHours / SchedHours, Null()), 0.25)                      as L1_BSP_FeederDTPct,
+    FRACTILE(If(SchedHours > 0, FeederDownCount / SchedHours, Null()), 0.25)                      as L1_BSP_FeederCntRate,
+    FRACTILE(If(TotalQty_OEE > 0, FeederDownCount / TotalQty_OEE * 10000, Null()), 0.25)         as L1_BSP_FeederPer10K
 RESIDENT JobFact_FeederBSP
 GROUP BY Plant, "WC Object ID", Die;
 
@@ -1334,9 +1252,9 @@ LOAD
     "Board Caliper",
     L2_ExtraDim,
     Count(1)                                                                                      as Fdr_L2_Count,
-    FRACTILE(If(SchedHours > 0, FeederDownHours / SchedHours, Null()), 0.1)                      as L2_BSP_FeederDTPct,
-    FRACTILE(If(SchedHours > 0, FeederDownCount / SchedHours, Null()), 0.1)                      as L2_BSP_FeederCntRate,
-    FRACTILE(If(TotalQty_OEE > 0, FeederDownCount / TotalQty_OEE * 10000, Null()), 0.1)         as L2_BSP_FeederPer10K
+    FRACTILE(If(SchedHours > 0, FeederDownHours / SchedHours, Null()), 0.25)                      as L2_BSP_FeederDTPct,
+    FRACTILE(If(SchedHours > 0, FeederDownCount / SchedHours, Null()), 0.25)                      as L2_BSP_FeederCntRate,
+    FRACTILE(If(TotalQty_OEE > 0, FeederDownCount / TotalQty_OEE * 10000, Null()), 0.25)         as L2_BSP_FeederPer10K
 RESIDENT JobFact_FeederBSP
 WHERE Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
 GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim;
@@ -1353,9 +1271,9 @@ LOAD
     Plant,
     "WC Object ID",
     Count(1)                                                                                      as Fdr_L3_Count,
-    FRACTILE(If(SchedHours > 0, FeederDownHours / SchedHours, Null()), 0.1)                      as L3_BSP_FeederDTPct,
-    FRACTILE(If(SchedHours > 0, FeederDownCount / SchedHours, Null()), 0.1)                      as L3_BSP_FeederCntRate,
-    FRACTILE(If(TotalQty_OEE > 0, FeederDownCount / TotalQty_OEE * 10000, Null()), 0.1)         as L3_BSP_FeederPer10K
+    FRACTILE(If(SchedHours > 0, FeederDownHours / SchedHours, Null()), 0.25)                      as L3_BSP_FeederDTPct,
+    FRACTILE(If(SchedHours > 0, FeederDownCount / SchedHours, Null()), 0.25)                      as L3_BSP_FeederCntRate,
+    FRACTILE(If(TotalQty_OEE > 0, FeederDownCount / TotalQty_OEE * 10000, Null()), 0.25)         as L3_BSP_FeederPer10K
 RESIDENT JobFact_FeederBSP
 GROUP BY Plant, "WC Object ID";
 
@@ -1382,9 +1300,9 @@ LOAD
     "WC Object ID",
     Die,
     Count(1)                                                                                      as Blk_L1_Count,
-    FRACTILE(If(SchedHours > 0, BlanketDownHours / SchedHours, Null()), 0.1)                     as L1_BSP_BlanketDTPct,
-    FRACTILE(If(SchedHours > 0, BlanketDownCount / SchedHours, Null()), 0.1)                     as L1_BSP_BlanketCntRate,
-    FRACTILE(If(TotalQty_OEE > 0, BlanketDownCount / TotalQty_OEE * 10000, Null()), 0.1)        as L1_BSP_BlanketPer10K
+    FRACTILE(If(SchedHours > 0, BlanketDownHours / SchedHours, Null()), 0.25)                     as L1_BSP_BlanketDTPct,
+    FRACTILE(If(SchedHours > 0, BlanketDownCount / SchedHours, Null()), 0.25)                     as L1_BSP_BlanketCntRate,
+    FRACTILE(If(TotalQty_OEE > 0, BlanketDownCount / TotalQty_OEE * 10000, Null()), 0.25)        as L1_BSP_BlanketPer10K
 RESIDENT JobFact_BlanketBSP
 GROUP BY Plant, "WC Object ID", Die;
 
@@ -1403,9 +1321,9 @@ LOAD
     "Board Caliper",
     L2_ExtraDim,
     Count(1)                                                                                      as Blk_L2_Count,
-    FRACTILE(If(SchedHours > 0, BlanketDownHours / SchedHours, Null()), 0.1)                     as L2_BSP_BlanketDTPct,
-    FRACTILE(If(SchedHours > 0, BlanketDownCount / SchedHours, Null()), 0.1)                     as L2_BSP_BlanketCntRate,
-    FRACTILE(If(TotalQty_OEE > 0, BlanketDownCount / TotalQty_OEE * 10000, Null()), 0.1)        as L2_BSP_BlanketPer10K
+    FRACTILE(If(SchedHours > 0, BlanketDownHours / SchedHours, Null()), 0.25)                     as L2_BSP_BlanketDTPct,
+    FRACTILE(If(SchedHours > 0, BlanketDownCount / SchedHours, Null()), 0.25)                     as L2_BSP_BlanketCntRate,
+    FRACTILE(If(TotalQty_OEE > 0, BlanketDownCount / TotalQty_OEE * 10000, Null()), 0.25)        as L2_BSP_BlanketPer10K
 RESIDENT JobFact_BlanketBSP
 WHERE Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
 GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim;
@@ -1422,9 +1340,9 @@ LOAD
     Plant,
     "WC Object ID",
     Count(1)                                                                                      as Blk_L3_Count,
-    FRACTILE(If(SchedHours > 0, BlanketDownHours / SchedHours, Null()), 0.1)                     as L3_BSP_BlanketDTPct,
-    FRACTILE(If(SchedHours > 0, BlanketDownCount / SchedHours, Null()), 0.1)                     as L3_BSP_BlanketCntRate,
-    FRACTILE(If(TotalQty_OEE > 0, BlanketDownCount / TotalQty_OEE * 10000, Null()), 0.1)        as L3_BSP_BlanketPer10K
+    FRACTILE(If(SchedHours > 0, BlanketDownHours / SchedHours, Null()), 0.25)                     as L3_BSP_BlanketDTPct,
+    FRACTILE(If(SchedHours > 0, BlanketDownCount / SchedHours, Null()), 0.25)                     as L3_BSP_BlanketCntRate,
+    FRACTILE(If(TotalQty_OEE > 0, BlanketDownCount / TotalQty_OEE * 10000, Null()), 0.25)        as L3_BSP_BlanketPer10K
 RESIDENT JobFact_BlanketBSP
 GROUP BY Plant, "WC Object ID";
 
@@ -1482,7 +1400,7 @@ MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_NetThroughput
 RESIDENT BSP_Main_L1;
 
 BSP_L1_DTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_DowntimePct_New
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_DowntimePct
 RESIDENT BSP_Main_L1;
 
 BSP_L1_DTHrs_Map:
@@ -1491,6 +1409,10 @@ RESIDENT BSP_Main_L1;
 
 BSP_L1_ScrapRate_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_ScrapRate
+RESIDENT BSP_Main_L1;
+
+BSP_L1_RunCount_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_RunCount
 RESIDENT BSP_Main_L1;
 
 DROP TABLE BSP_Main_L1;
@@ -1520,7 +1442,7 @@ MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Bo
 RESIDENT BSP_Main_L2;
 
 BSP_L2_DTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_DowntimePct_New
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_DowntimePct
 RESIDENT BSP_Main_L2;
 
 BSP_L2_DTHrs_Map:
@@ -1529,6 +1451,10 @@ RESIDENT BSP_Main_L2;
 
 BSP_L2_ScrapRate_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_ScrapRate
+RESIDENT BSP_Main_L2;
+
+BSP_L2_RunCount_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_RunCount
 RESIDENT BSP_Main_L2;
 
 DROP TABLE BSP_Main_L2;
@@ -1558,7 +1484,7 @@ MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_NetThroughput
 RESIDENT BSP_Main_L3;
 
 BSP_L3_DTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_DowntimePct_New
+MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_DowntimePct
 RESIDENT BSP_Main_L3;
 
 BSP_L3_DTHrs_Map:
@@ -1567,6 +1493,10 @@ RESIDENT BSP_Main_L3;
 
 BSP_L3_ScrapRate_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_ScrapRate
+RESIDENT BSP_Main_L3;
+
+BSP_L3_RunCount_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], L3_RunCount
 RESIDENT BSP_Main_L3;
 
 DROP TABLE BSP_Main_L3;
@@ -1892,6 +1822,14 @@ LOAD
             If(Not IsNull(ApplyMap('BSP_L3_OEE_Map', Plant & '|' & [WC Object ID], Null())), 1,
                 0)))                                                                             as Die_BSP_ConfScore,
 
+    // Pool size (run count) at the level that resolved OEE BSP for this die
+    Coalesce(
+        ApplyMap('BSP_L1_RunCount_Map', Plant & '|' & [WC Object ID] & '|' & Die, Null()),
+        ApplyMap('BSP_L2_RunCount_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
+        ApplyMap('BSP_L3_RunCount_Map', Plant & '|' & [WC Object ID], Null()))                  as Die_BSP_PoolSize,
+
     // SchedHours counted only for dies where OEE BSP was resolved
     If(Not IsNull(Coalesce(
         ApplyMap('BSP_L1_OEE_Map', Plant & '|' & [WC Object ID] & '|' & Die, Null()),
@@ -1912,6 +1850,7 @@ DROP MAPPING TABLE BSP_L1_Speed_Map;
 DROP MAPPING TABLE BSP_L1_DTPct_Map;
 DROP MAPPING TABLE BSP_L1_DTHrs_Map;
 DROP MAPPING TABLE BSP_L1_ScrapRate_Map;
+DROP MAPPING TABLE BSP_L1_RunCount_Map;
 DROP MAPPING TABLE BSP_L2_OEE_Map;
 DROP MAPPING TABLE BSP_L2_Avail_Map;
 DROP MAPPING TABLE BSP_L2_Perf_Map;
@@ -1920,6 +1859,7 @@ DROP MAPPING TABLE BSP_L2_Speed_Map;
 DROP MAPPING TABLE BSP_L2_DTPct_Map;
 DROP MAPPING TABLE BSP_L2_DTHrs_Map;
 DROP MAPPING TABLE BSP_L2_ScrapRate_Map;
+DROP MAPPING TABLE BSP_L2_RunCount_Map;
 DROP MAPPING TABLE BSP_L3_OEE_Map;
 DROP MAPPING TABLE BSP_L3_Avail_Map;
 DROP MAPPING TABLE BSP_L3_Perf_Map;
@@ -1928,6 +1868,7 @@ DROP MAPPING TABLE BSP_L3_Speed_Map;
 DROP MAPPING TABLE BSP_L3_DTPct_Map;
 DROP MAPPING TABLE BSP_L3_DTHrs_Map;
 DROP MAPPING TABLE BSP_L3_ScrapRate_Map;
+DROP MAPPING TABLE BSP_L3_RunCount_Map;
 DROP MAPPING TABLE BSP_L1_SetupHrsEv_Map;
 DROP MAPPING TABLE BSP_L1_SetupPct_Map;
 DROP MAPPING TABLE BSP_L2_SetupHrsEv_Map;
@@ -2007,7 +1948,11 @@ LOAD
 
     // Coverage-weighted confidence score across all dies in week
     If(Sum(Wk_Die_SchedHours) > 0,
-        Sum(Die_BSP_ConfScore * Wk_Die_SchedHours) / Sum(Wk_Die_SchedHours), 0)               as BSP_ConfScore
+        Sum(Die_BSP_ConfScore * Wk_Die_SchedHours) / Sum(Wk_Die_SchedHours), 0)               as BSP_ConfScore,
+
+    // SchedHours-weighted pool size — low values signal a thin BSP benchmark
+    If(Sum(Wk_Die_SchedHours) > 0,
+        Sum(Die_BSP_PoolSize * Wk_Die_SchedHours) / Sum(Wk_Die_SchedHours), Null())           as BSP_PoolSize
 RESIDENT WeeklyDieBSP
 GROUP BY WeekStart, Plant, "WC Object ID";
 
@@ -2256,7 +2201,8 @@ LOAD
     Max(If(WeekStart = $(vLastWeekStart), Streak_SetupTimePct,     Null()))                     as Streak_SetupTimePct,
     If(Sum(Wk_TotalSchedHours) > 0,
         Sum(Wk_CoveredSchedHours) / Sum(Wk_TotalSchedHours), 0)                                as Cur_BSP_CoveragePct,
-    Max(If(WeekStart = $(vLastWeekStart), BSP_ConfScore,           Null()))                     as Cur_BSP_ConfScore
+    Max(If(WeekStart = $(vLastWeekStart), BSP_ConfScore,           Null()))                     as Cur_BSP_ConfScore,
+    Max(If(WeekStart = $(vLastWeekStart), BSP_PoolSize,            Null()))                     as Cur_BSP_PoolSize
 RESIDENT WeeklyMachineBSP
 WHERE WeekStart >= $(v2WeekStart) AND WeekStart < $(vCurrentWeekStart)
 GROUP BY Plant, "WC Object ID";
@@ -3034,6 +2980,7 @@ LOAD
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
     If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
         If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
             If(Cur_BSP_ConfScore >= 0.5, 'LOW',
@@ -3063,6 +3010,7 @@ LOAD
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
     If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
         If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
             If(Cur_BSP_ConfScore >= 0.5, 'LOW',
@@ -3092,6 +3040,7 @@ LOAD
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
     If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
         If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
             If(Cur_BSP_ConfScore >= 0.5, 'LOW',
@@ -3121,6 +3070,7 @@ LOAD
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
     If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
         If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
             If(Cur_BSP_ConfScore >= 0.5, 'LOW',
@@ -3150,6 +3100,7 @@ LOAD
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
     If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
         If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
             If(Cur_BSP_ConfScore >= 0.5, 'LOW',
@@ -3180,6 +3131,7 @@ LOAD
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
     If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
         If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
             If(Cur_BSP_ConfScore >= 0.5, 'LOW',
@@ -3209,6 +3161,7 @@ LOAD
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
     If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
         If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
             If(Cur_BSP_ConfScore >= 0.5, 'LOW',
@@ -3238,6 +3191,7 @@ LOAD
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
     If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
         If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
             If(Cur_BSP_ConfScore >= 0.5, 'LOW',
@@ -3267,6 +3221,7 @@ LOAD
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
     If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
         If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
             If(Cur_BSP_ConfScore >= 0.5, 'LOW',
@@ -3296,6 +3251,7 @@ LOAD
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
     If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
         If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
             If(Cur_BSP_ConfScore >= 0.5, 'LOW',
@@ -3339,6 +3295,7 @@ LOAD
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
     BSP_Confidence,
     Cur_Actual_Fmt,
     BSP_Benchmark_Fmt,
@@ -3689,6 +3646,7 @@ LOAD
     OEE_Impact,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
     BSP_Confidence,
     If(Plant = Peek('Plant'),
         Peek('Insight_Rank') + 1, 1)                                                            as Insight_Rank
@@ -3735,6 +3693,7 @@ LOAD
     OEE_Impact,
     Null()                                                                                      as Cur_BSP_CoveragePct,
     Null()                                                                                      as Cur_BSP_ConfScore,
+    Null()                                                                                      as Cur_BSP_PoolSize,
     Null()                                                                                      as BSP_Confidence,
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID')
         AND KPI_Name = Peek('KPI_Name'),

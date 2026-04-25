@@ -19,7 +19,7 @@ The script is a single `.qvs` file divided into 6 logical tabs (marked with `///
 ### Step 1 — Variables & Config
 - Week boundary variables (`vCurrentWeekStart`, `vLastWeekStart`, `v2WeekStart`, `v4WeekStart`, `v13WeekStart`) computed from `Today()` using `WeekStart()` with `vWeekStartDay = 0` (Monday). **`v2WeekStart = vLastWeekStart` (both set to `-1`) — the current period is 1 week, not 2.** `v4WeekStart` is used only for the Section 41B streak weekly lookback.
 - BSP window: `v2YearStart` = rolling 24 months back from today (not a fixed date).
-- Thresholds: `vBSP_L1_Min=10`, `vBSP_L2_Min=20`, `vBSP_L3_Min=30`, `vMinCoverage=0.5`, `vBSP_DT_MinRunPct=0.40` (DT% bifurcated pool run-exposure floor — tune here without script changes).
+- Thresholds: `vBSP_L1_Min=15`, `vBSP_L2_Min=25`, `vBSP_L3_Min=35`, `vMinCoverage=0.5`.
 - Output path `vInsightQVDPath` → SharePoint; fact source `vFactQVD` → QVD library.
 
 ### Step 2 — Dimension Tables
@@ -36,11 +36,9 @@ This is the most complex step. `JobFact_Raw` is loaded once (full binary QVD rea
 | Table | Grain | Purpose |
 |---|---|---|
 | `JobFact_Job_BSP_Agg` | Date + WC + Shift + Die | L1 BSP source aggregation |
-| `JobFact_Job_BSP` | Same grain, RunHours > 2 filter | L1 BSP qualifying runs (all KPIs except DT%) |
-| `JobFact_Job_DT_BSP` | Same, + RunHours/SchedHours ≥ `vBSP_DT_MinRunPct` | DT%-only stricter pool (L1 and L3 grain) |
+| `JobFact_Job_BSP` | Same grain, RunHours > 2 filter | L1 BSP qualifying runs (all KPIs) |
 | `JobFact_Job_BSP_L2_Agg` | Date + WC + Shift + Die + **PltMatKey** | L2 BSP source (PltMatKey as true GROUP BY, not Max()) |
-| `JobFact_Job_BSP_L2` | Same + board attributes resolved | L2 BSP qualifying runs (all KPIs except DT%) |
-| `JobFact_Job_DT_BSP_L2` | Same, + RunHours/SchedHours ≥ `vBSP_DT_MinRunPct` | DT%-only stricter pool (L2 grain) |
+| `JobFact_Job_BSP_L2` | Same + board attributes resolved | L2 BSP qualifying runs (all KPIs) |
 | `JobFact_DownReason_BSP` | Date + WC + Shift + Die + PltMatKey + ReasonKey | Downtime reason BSP source |
 | `JobFact_ScrapReason_BSP` | Date + WC + Shift + Die + PltMatKey + ReasonKey | Scrap reason BSP source |
 | `JobFact_Scoring_Agg` | Date + WC + Die + Carton + PltMatKey + Shift + Operator + Order | 13-week trend + current period |
@@ -66,7 +64,7 @@ This single column is appended to all L2 BSP mapping keys, so no extra tables ar
 2. `BSP_X` — filtered to min run count threshold
 3. Raw table dropped
 
-- **Main/Downtime/Scrap KPIs:** `P90` for higher-is-better, `P10` for lower-is-better.
+- **Main/Downtime/Scrap KPIs:** `P75` for higher-is-better, `P25` for lower-is-better. Recalibrated from P90/P10 because L1 pools average ~min-threshold observations, where P10/P90 collapse to a single extreme value — not reliably chaseable.
 - **Setup KPIs:** add `MROClass` to all 3 levels (1MR0/2MR0/3MR0 from `WildMatch` on reason key).
 - **L2 Main and L2 Setup BSP** read from `JobFact_Job_BSP_L2` (not `JobFact_Job_BSP`) because L2 requires board attributes which only the L2 source resolves correctly via the PltMatKey GROUP BY.
 
@@ -106,10 +104,10 @@ Per-reason `Streak_4wk` (range 0–4) is the count of weeks in the last 4 full w
 Insight_ID, Plant, WC Object ID, Plant - WC, Department, Period_Start,
 KPI_Name, KPI_Category, Reasons, Cur_Actual, BSP_Benchmark, Cur_Actual_Fmt, BSP_Benchmark_Fmt,
 Gap_Pct, Streak_4wk, OEE_Impact,
-Cur_BSP_CoveragePct, Cur_BSP_ConfScore, BSP_Confidence, Insight_Rank
+Cur_BSP_CoveragePct, Cur_BSP_ConfScore, Cur_BSP_PoolSize, BSP_Confidence, Insight_Rank
 ```
 
-Reason rows have `Cur_BSP_CoveragePct / Cur_BSP_ConfScore / BSP_Confidence = Null()`; Main rows have `Reasons = Null()`.
+Reason rows have `Cur_BSP_CoveragePct / Cur_BSP_ConfScore / Cur_BSP_PoolSize / BSP_Confidence = Null()`; Main rows have `Reasons = Null()`.
 
 **Removed fields** (no longer in output): `tPltRsnKey`, `sPltRsnKey`, `Streak_13wk`, `Gap_Score`, `Trend_Score`, `Composite_Score`, `Impact_Score`.
 
@@ -126,7 +124,7 @@ Reason rows have `Cur_BSP_CoveragePct / Cur_BSP_ConfScore / BSP_Confidence = Nul
 | `Only()` for string fields in aggregations, `Max()` for numerics | `Max()` on a text field in Qlik returns NULL. `Only()` returns the value if the group contains exactly one distinct value (else NULL, which acts as a data-quality signal). Used for `CartonStyle` everywhere it is aggregated. `NumberUp` is numeric so `Max()` is correct. |
 | `OEE_Impact` is true hours lost vs BSP | All KPIs now use absolute-gap × time-denominator; `Gap_Pct` keeps the relative display. Scoring numbers were wrong units — plant leaders read `OEE_Impact` as hours. |
 | `KPI_Category` splits Outcome from Lever | `'Outcome'`: OEE, Availability, Quality, Downtime %, Scrap Rate, Net Throughput Rate (composite KPIs, not directly fixable). `'Lever'`: everything else (Performance, Speed, Setup Hrs/Event, Setup Time %, all Reasons, all Feeder/Blanket). Rationale: flat ranking by `OEE_Impact` was always dominated by Outcome KPIs. Front-end filters `KPI_Category = 'Lever'` to produce the weekly action list; Outcome rows remain for scorecard context. Both categories are stored in `InsightRecords`. |
-| Bifurcated DT% qualifying pool | DT% = DownHours/SchedHours shares its denominator with Setup. Setup-heavy shifts depress DT% P10 artificially (machine didn't run long enough to accumulate normal failure events). A stricter `RunHours/SchedHours ≥ vBSP_DT_MinRunPct (0.40)` gate is applied to the DT% FRACTILE pool only — `JobFact_Job_DT_BSP` / `JobFact_Job_DT_BSP_L2` — and the result is LEFT JOINed back into `BSP_Main_L{1,2,3}` as `L{n}_BSP_DowntimePct_New` before mapping tables are built. Setup% and all other KPI pools are **unchanged**. Threshold is a config variable for future tuning. |
+| BSP percentile P25/P75, not P10/P90 | At current ~15–35 run pool sizes, P10/P90 of N obs ≈ a single extreme value — fragile and non-chaseable. P25 of 15 obs is the 4th-best value, demanding but stable. Min thresholds raised to L1=15/L2=25/L3=35 simultaneously to keep ambition. `Cur_BSP_PoolSize` (SchedHours-weighted avg run-count of the resolved BSP level) is emitted in `InsightRecords` so leadership can flag thin-pool benchmarks. |
 | `Cur_BSP_CoveragePct` is 1-week coverage | `Sum(CoveredSchedHours) / Sum(TotalSchedHours)` over the single current week (`v2WeekStart = vLastWeekStart`). |
 | Coverage threshold is strict `> 0.5` | Not `>= 0.5`. Exactly 50% coverage does not pass. |
 | `Cur_SchedHours = Sum(Wk_SchedHours)` | Represents total scheduled hours for the 1-week current period. `Avg` was incorrect. |
@@ -145,7 +143,7 @@ Applied inline on every aggregation — never pre-filtered:
 
 ## KPI Direction Reference
 
-| Higher-is-better (P90 BSP, fires when Actual < BSP) | Lower-is-better (P10 BSP, fires when Actual > BSP) |
+| Higher-is-better (P75 BSP, fires when Actual < BSP) | Lower-is-better (P25 BSP, fires when Actual > BSP) |
 |---|---|
 | OEE, Availability, Performance, Quality, Speed, Net Throughput Rate | Downtime %, Scrap Rate, Setup Hrs/Event, Setup Time % |
 
