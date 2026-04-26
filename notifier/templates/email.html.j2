@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: Calibri, Arial, sans-serif; font-size: 14px; color: #1a1a1a; }
+  h2 { color: #003366; border-bottom: 2px solid #003366; padding-bottom: 4px; }
+  h3 { color: #005099; margin-top: 24px; margin-bottom: 4px; }
+  .impact { font-size: 1.05em; }
+  .levers { margin-top: 8px; padding-left: 18px; }
+  .levers li { margin-bottom: 4px; }
+  .streak { color: #c0392b; font-weight: bold; }
+  .footer { margin-top: 32px; font-size: 12px; color: #888; border-top: 1px solid #ddd; padding-top: 8px; }
+</style>
+</head>
+<body>
+
+<h2>{{ subject }}</h2>
+<p>Week of <strong>{{ digest.period_start }}</strong></p>
+
+{% for m in digest.machines %}
+<h3>{{ m.plant_wc }} — {{ m.department }}</h3>
+<p class="impact">
+  <strong>{{ m.plant_wc }}</strong> lost
+  <strong>{{ "%.1f" | format(m.total_oee_impact) }} hours</strong> of OEE Impact this week
+  {%- if m.outcome_1 %},
+  driven primarily by <strong>{{ m.outcome_1 }}</strong>
+  ({{ "%.1f" | format(m.outcome_1_hours) }} hrs)
+  {%- if m.outcome_2 %} and <strong>{{ m.outcome_2 }}</strong>
+  ({{ "%.1f" | format(m.outcome_2_hours) }} hrs){% endif %}{% endif %}.
+</p>
+
+{% if m.levers %}
+<p>To close those gaps, focus on these top levers:</p>
+<ul class="levers">
+{% for l in m.levers %}
+  <li>
+    <strong>{{ l.name }}{% if l.reasons %} — {{ l.reasons }}{% endif %}</strong>
+    ({{ l.parent_outcome }},
+     {{ "%.1f" | format(l.hours) }} hrs lost,
+     gap {{ "%.1f" | format(l.gap_pct * 100) }}%
+     {%- if l.streak > 0 %},
+     <span class="streak">{{ l.streak }}/4 weeks above BSP</span>{% endif %})
+  </li>
+{% endfor %}
+</ul>
+<p>
+  Improving their gap and breaking their streak will move
+  <strong>{{ m.outcome_1 }}{% if m.outcome_2 %} and {{ m.outcome_2 }}{% endif %}</strong>.
+</p>
+{% endif %}
+
+{% endfor %}
+
+<div class="footer">
+  Generated automatically by the Folding Carton Actionable Intelligence Platform.
+  Do not reply to this email.
+</div>
+</body>
+</html>

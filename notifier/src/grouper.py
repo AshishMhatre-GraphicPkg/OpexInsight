@@ -1,0 +1,125 @@
+"""Group MachineWeekSummary rows by Manager_Email into ManagerDigest objects."""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+
+import pandas as pd
+
+log = logging.getLogger(__name__)
+
+# CSV column names (match Qlik STORE output)
+_COL_MANAGER = "Manager_Email"
+_COL_CC = "CC_List"
+_COL_PLANT_WC = "Plant - WC"
+_COL_DEPT = "Department"
+_COL_PERIOD = "Period_Start"
+_COL_TOTAL = "Total_OEE_Impact"
+_COL_O1_NAME = "Outcome_1_Name"
+_COL_O1_HRS = "Outcome_1_Hours"
+_COL_O2_NAME = "Outcome_2_Name"
+_COL_O2_HRS = "Outcome_2_Hours"
+
+_LEVER_FIELDS = ("Name", "Reasons", "Hours", "Gap_Pct", "Streak", "Parent_Outcome")
+
+
+@dataclass
+class LeverSummary:
+    name: str
+    reasons: str | None
+    hours: float
+    gap_pct: float
+    streak: int
+    parent_outcome: str
+
+
+@dataclass
+class MachineSummary:
+    plant_wc: str
+    department: str
+    period_start: str
+    total_oee_impact: float
+    outcome_1: str | None
+    outcome_1_hours: float | None
+    outcome_2: str | None
+    outcome_2_hours: float | None
+    levers: list[LeverSummary] = field(default_factory=list)
+
+
+@dataclass
+class ManagerDigest:
+    manager_email: str
+    cc_list: str | None
+    period_start: str
+    machines: list[MachineSummary] = field(default_factory=list)
+
+
+def _nan_to_none(val):
+    if pd.isna(val):
+        return None
+    return val
+
+
+def _build_levers(row: pd.Series) -> list[LeverSummary]:
+    levers = []
+    for i in (1, 2, 3):
+        name = _nan_to_none(row.get(f"Lever_{i}_Name"))
+        if name is None:
+            break
+        levers.append(
+            LeverSummary(
+                name=str(name),
+                reasons=_nan_to_none(row.get(f"Lever_{i}_Reasons")),
+                hours=float(row.get(f"Lever_{i}_Hours", 0) or 0),
+                gap_pct=float(row.get(f"Lever_{i}_Gap_Pct", 0) or 0),
+                streak=int(row.get(f"Lever_{i}_Streak", 0) or 0),
+                parent_outcome=str(row.get(f"Lever_{i}_Parent_Outcome", "") or ""),
+            )
+        )
+    return levers
+
+
+def group_by_manager(df: pd.DataFrame) -> list[ManagerDigest]:
+    """Return one ManagerDigest per unique Manager_Email, ordered by Total_OEE_Impact DESC."""
+    if _COL_MANAGER not in df.columns:
+        raise ValueError(f"CSV missing column '{_COL_MANAGER}'")
+
+    df = df.sort_values(_COL_TOTAL, ascending=False)
+    digests: list[ManagerDigest] = []
+
+    for email, group in df.groupby(_COL_MANAGER, sort=False):
+        if pd.isna(email) or str(email).strip() == "":
+            log.warning("Skipping %d rows with no Manager_Email", len(group))
+            continue
+
+        cc = _nan_to_none(group[_COL_CC].iloc[0]) if _COL_CC in group.columns else None
+        period = str(group[_COL_PERIOD].iloc[0])
+
+        machines = []
+        for _, row in group.iterrows():
+            machines.append(
+                MachineSummary(
+                    plant_wc=str(row[_COL_PLANT_WC]),
+                    department=str(row.get(_COL_DEPT, "")),
+                    period_start=str(row[_COL_PERIOD]),
+                    total_oee_impact=float(row.get(_COL_TOTAL, 0) or 0),
+                    outcome_1=_nan_to_none(row.get(_COL_O1_NAME)),
+                    outcome_1_hours=float(row[_COL_O1_HRS]) if _nan_to_none(row.get(_COL_O1_HRS)) is not None else None,
+                    outcome_2=_nan_to_none(row.get(_COL_O2_NAME)),
+                    outcome_2_hours=float(row[_COL_O2_HRS]) if _nan_to_none(row.get(_COL_O2_HRS)) is not None else None,
+                    levers=_build_levers(row),
+                )
+            )
+
+        digests.append(
+            ManagerDigest(
+                manager_email=str(email),
+                cc_list=str(cc) if cc else None,
+                period_start=period,
+                machines=machines,
+            )
+        )
+
+    log.info("Grouped %d machines into %d manager digests", len(df), len(digests))
+    return digests

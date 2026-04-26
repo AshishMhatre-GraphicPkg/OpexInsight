@@ -37,6 +37,8 @@ SET vMinCoverage       = 0.5;
 
 SET vInsightQVDPath = 'lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/InsightRecord.qvd';
 SET vFactQVD        = 'lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - Facts.qvd';
+SET vSummaryQVDPath = 'lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/MachineWeekSummary.qvd';
+SET vSummaryCSVPath = 'lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/MachineWeekSummary.csv';
 
 
 
@@ -261,6 +263,28 @@ MAPPING LOAD
 FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - OrderOpData.qvd]
 (qvd)
 WHERE Not IsNull("Order Operation Key");
+
+
+// ============================================================
+// SECTION 7B: PLANT MANAGER EMAIL MAPPING
+// PlantManagers.xlsx columns: Plant, Manager_Name, Manager_Email, CC_List
+// Used in Section 49 to stamp Manager_Email onto each summary row
+// so the Python notifier can group by Manager_Email with no second config
+// ============================================================
+
+PlantManager_Map:
+MAPPING LOAD
+    Plant,
+    Manager_Email
+FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
+(ooxml, embedded labels, table is PlantManagers);
+
+PlantManager_CC_Map:
+MAPPING LOAD
+    Plant,
+    CC_List
+FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
+(ooxml, embedded labels, table is PlantManagers);
 
 
 ///$tab Step 3
@@ -3029,7 +3053,7 @@ LOAD
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
     'Performance'                                                                               as KPI_Name,
-    'Lever'                                                                                     as KPI_Category,
+    'Lever - OEE'                                                                               as KPI_Category,
     Cur_Performance                                                                             as Cur_Actual,
     Cur_BSP_Performance                                                                         as BSP_Benchmark,
     Num(Cur_Performance,     '0.00%')                                                           as Cur_Actual_Fmt,
@@ -3089,7 +3113,7 @@ LOAD
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
     'Speed'                                                                                     as KPI_Name,
-    'Lever'                                                                                     as KPI_Category,
+    'Lever - Net Throughput Rate'                                                               as KPI_Category,
     Cur_Speed                                                                                   as Cur_Actual,
     Cur_BSP_Speed                                                                               as BSP_Benchmark,
     Cur_Speed                                                                                   as Cur_Actual_Fmt,
@@ -3210,7 +3234,7 @@ LOAD
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
     'Setup Hrs/Event'                                                                           as KPI_Name,
-    'Lever'                                                                                     as KPI_Category,
+    'Lever - Availability'                                                                      as KPI_Category,
     Cur_SetupHrsPerEvent                                                                        as Cur_Actual,
     Cur_BSP_SetupHrsPerEvent                                                                    as BSP_Benchmark,
     Cur_SetupHrsPerEvent                                                                        as Cur_Actual_Fmt,
@@ -3240,7 +3264,7 @@ LOAD
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
     'Setup Time %'                                                                              as KPI_Name,
-    'Lever'                                                                                     as KPI_Category,
+    'Lever - Availability'                                                                      as KPI_Category,
     Cur_SetupTimePct                                                                            as Cur_Actual,
     Cur_BSP_SetupTimePct                                                                        as BSP_Benchmark,
     Num(Cur_SetupTimePct,     '0.00%')                                                          as Cur_Actual_Fmt,
@@ -3336,7 +3360,7 @@ LOAD
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
     'Downtime Reason'                                                                           as KPI_Name,
-    'Lever'                                                                                     as KPI_Category,
+    'Lever - Downtime %'                                                                        as KPI_Category,
     ApplyMap('TimeReason_Name_Map', tPltRsnKey, tPltRsnKey)                                     as Reasons,
     If(TotalSchedHrs_2wk > 0, Cur_ReasonDownHours / TotalSchedHrs_2wk, Null())                  as Cur_Actual,
     Rsn_BSP_DownPct                                                                             as BSP_Benchmark,
@@ -3369,7 +3393,7 @@ LOAD
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
     'Scrap Reason'                                                                              as KPI_Name,
-    'Lever'                                                                                     as KPI_Category,
+    'Lever - Scrap Rate'                                                                        as KPI_Category,
     ApplyMap('ScrapReason_Name_Map', sPltRsnKey, sPltRsnKey)                                    as Reasons,
     If(TotalQty_2wk > 0, Cur_ReasonScrapQty / TotalQty_2wk, Null())                             as Cur_Actual,
     Rsn_BSP_ScrapPct                                                                            as BSP_Benchmark,
@@ -3417,7 +3441,7 @@ LOAD
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                     as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                           as Period_Start,
     'Feeder DT%'                                                                                 as KPI_Name,
-    'Lever'                                                                                      as KPI_Category,
+    'Lever - Downtime %'                                                                         as KPI_Category,
     'Feeder DT%'                                                                                 as Reasons,
     If(TotalSchedHrs_2wk > 0, Cur_FeederDownHours / TotalSchedHrs_2wk, Null())                  as Cur_Actual,
     Feeder_BSP_DTPct                                                                             as BSP_Benchmark,
@@ -3447,7 +3471,7 @@ LOAD
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                     as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                           as Period_Start,
     'Feeder Count Rate'                                                                          as KPI_Name,
-    'Lever'                                                                                      as KPI_Category,
+    'Lever - Downtime %'                                                                         as KPI_Category,
     'Feeder Count Rate'                                                                          as Reasons,
     If(TotalSchedHrs_2wk > 0, Cur_FeederDownCount / TotalSchedHrs_2wk, Null())                  as Cur_Actual,
     Feeder_BSP_CntRate                                                                           as BSP_Benchmark,
@@ -3480,7 +3504,7 @@ LOAD
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                     as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                           as Period_Start,
     'Feeder Per10K'                                                                              as KPI_Name,
-    'Lever'                                                                                      as KPI_Category,
+    'Lever - Downtime %'                                                                         as KPI_Category,
     'Feeder Per10K'                                                                              as Reasons,
     If(Cur_FeederTotalQty > 0, Cur_FeederDownCount / Cur_FeederTotalQty * 10000, Null())         as Cur_Actual,
     Feeder_BSP_Per10K                                                                            as BSP_Benchmark,
@@ -3521,7 +3545,7 @@ LOAD
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                     as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                           as Period_Start,
     'Blanket DT%'                                                                                as KPI_Name,
-    'Lever'                                                                                      as KPI_Category,
+    'Lever - Downtime %'                                                                         as KPI_Category,
     'Blanket DT%'                                                                                as Reasons,
     If(TotalSchedHrs_2wk > 0, Cur_BlanketDownHours / TotalSchedHrs_2wk, Null())                 as Cur_Actual,
     Blanket_BSP_DTPct                                                                            as BSP_Benchmark,
@@ -3551,7 +3575,7 @@ LOAD
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                     as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                           as Period_Start,
     'Blanket Count Rate'                                                                         as KPI_Name,
-    'Lever'                                                                                      as KPI_Category,
+    'Lever - Downtime %'                                                                         as KPI_Category,
     'Blanket Count Rate'                                                                         as Reasons,
     If(TotalSchedHrs_2wk > 0, Cur_BlanketDownCount / TotalSchedHrs_2wk, Null())                 as Cur_Actual,
     Blanket_BSP_CntRate                                                                          as BSP_Benchmark,
@@ -3584,7 +3608,7 @@ LOAD
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                     as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                           as Period_Start,
     'Blanket Per10K'                                                                             as KPI_Name,
-    'Lever'                                                                                      as KPI_Category,
+    'Lever - Downtime %'                                                                         as KPI_Category,
     'Blanket Per10K'                                                                             as Reasons,
     If(Cur_BlanketTotalQty > 0, Cur_BlanketDownCount / Cur_BlanketTotalQty * 10000, Null())      as Cur_Actual,
     Blanket_BSP_Per10K                                                                           as BSP_Benchmark,
@@ -3771,3 +3795,343 @@ STORE [InsightRecords_History] INTO [$(vInsightQVDPath)] (qvd);
 RENAME TABLE [InsightRecords_History] TO InsightRecords;
 
 TRACE InsightRecords stored successfully — incremental append complete;
+
+
+///$tab Step 7
+// ============================================================
+// SECTION 49: MACHINE WEEK SUMMARY
+// Materialises a narrow, pivot-wide summary from InsightRecords
+// for the current period only (Period_Start = v2WeekStart).
+// Output: one row per Plant|WC|Period_Start with:
+//   - top-2 Outcome rows (by OEE_Impact DESC)
+//   - top-3 Lever rows (from top-2 Outcomes' pool; fall back to
+//     top-3 overall if that pool is empty for the machine)
+// Stored as QVD (Qlik mart) + CSV (Python notifier consumption).
+// InsightRecords at this point is the full history table (after
+// Section 48 RENAME) — all reads filter to $(v2WeekStart).
+// ============================================================
+
+// ---- Step A: total OEE_Impact per machine-week ----
+
+Temp_TotalImpact:
+NoConcatenate
+LOAD
+    Plant,
+    [WC Object ID],
+    Sum(OEE_Impact)     as Total_OEE_Impact
+RESIDENT InsightRecords
+WHERE Period_Start = $(v2WeekStart)
+GROUP BY Plant, [WC Object ID];
+
+TotalImpact_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID],
+    Total_OEE_Impact
+RESIDENT Temp_TotalImpact;
+
+DROP TABLE Temp_TotalImpact;
+
+
+// ---- Step B: rank Outcome rows per machine-week ----
+// ORDER BY guarantees Peek() increments correctly within each group
+
+Temp_OutcomeRanked:
+NoConcatenate
+LOAD
+    Plant,
+    [WC Object ID],
+    KPI_Name                                                        as Outcome_Name,
+    OEE_Impact                                                      as Outcome_Hours,
+    If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID'),
+       Peek('Outcome_Rank') + 1, 1)                                 as Outcome_Rank
+RESIDENT InsightRecords
+WHERE Period_Start = $(v2WeekStart) AND KPI_Category = 'Outcome'
+ORDER BY Plant, [WC Object ID], OEE_Impact DESC;
+
+
+// ---- Step C: outcome position maps ----
+
+Outcome1_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID],
+    Outcome_Name
+RESIDENT Temp_OutcomeRanked
+WHERE Outcome_Rank = 1;
+
+Outcome1_Hours_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID],
+    Outcome_Hours
+RESIDENT Temp_OutcomeRanked
+WHERE Outcome_Rank = 1;
+
+Outcome2_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID],
+    Outcome_Name
+RESIDENT Temp_OutcomeRanked
+WHERE Outcome_Rank = 2;
+
+Outcome2_Hours_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID],
+    Outcome_Hours
+RESIDENT Temp_OutcomeRanked
+WHERE Outcome_Rank = 2;
+
+DROP TABLE Temp_OutcomeRanked;
+
+
+// ---- Step D: pool levers (those laddering into top-2 Outcomes) ----
+// Chr(0) sentinel prevents false match when a machine has only 1 Outcome
+
+Temp_PoolLevers:
+NoConcatenate
+LOAD
+    Plant,
+    [WC Object ID],
+    KPI_Name                                                        as Lever_Name,
+    Reasons                                                         as Lever_Reasons,
+    OEE_Impact                                                      as Lever_Hours,
+    Gap_Pct                                                         as Lever_Gap_Pct,
+    Streak_4wk                                                      as Lever_Streak,
+    Replace(KPI_Category, 'Lever - ', '')                           as Lever_Parent_Outcome
+RESIDENT InsightRecords
+WHERE Period_Start = $(v2WeekStart)
+  AND WildMatch(KPI_Category, 'Lever - *')
+  AND (
+      Replace(KPI_Category, 'Lever - ', '')
+          = ApplyMap('Outcome1_Map', Plant & '|' & [WC Object ID], Chr(0))
+      OR Replace(KPI_Category, 'Lever - ', '')
+          = ApplyMap('Outcome2_Map', Plant & '|' & [WC Object ID], Chr(0))
+  );
+
+
+// ---- Step E: flag machines that have at least one pool lever ----
+
+HasPoolLevers_Map:
+MAPPING LOAD DISTINCT
+    Plant & '|' & [WC Object ID],
+    1
+RESIDENT Temp_PoolLevers;
+
+
+// ---- Step F: rank pool levers ----
+
+Temp_PoolLeversRanked:
+NoConcatenate
+LOAD
+    Plant,
+    [WC Object ID],
+    Lever_Name,
+    Lever_Reasons,
+    Lever_Hours,
+    Lever_Gap_Pct,
+    Lever_Streak,
+    Lever_Parent_Outcome,
+    If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID'),
+       Peek('Lever_Rank') + 1, 1)                                   as Lever_Rank
+RESIDENT Temp_PoolLevers
+ORDER BY Plant, [WC Object ID], Lever_Hours DESC;
+
+DROP TABLE Temp_PoolLevers;
+
+
+// ---- Step G: fallback — rank ALL levers, but only for machines ----
+// that have no pool levers (ApplyMap returns 0 for those machines)
+
+Temp_AllLeversRanked:
+NoConcatenate
+LOAD
+    Plant,
+    [WC Object ID],
+    KPI_Name                                                        as Lever_Name,
+    Reasons                                                         as Lever_Reasons,
+    OEE_Impact                                                      as Lever_Hours,
+    Gap_Pct                                                         as Lever_Gap_Pct,
+    Streak_4wk                                                      as Lever_Streak,
+    Replace(KPI_Category, 'Lever - ', '')                           as Lever_Parent_Outcome,
+    If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID'),
+       Peek('Lever_Rank') + 1, 1)                                   as Lever_Rank
+RESIDENT InsightRecords
+WHERE Period_Start = $(v2WeekStart)
+  AND WildMatch(KPI_Category, 'Lever - *')
+  AND ApplyMap('HasPoolLevers_Map', Plant & '|' & [WC Object ID], 0) = 0
+ORDER BY Plant, [WC Object ID], OEE_Impact DESC;
+
+DROP MAPPING TABLE HasPoolLevers_Map;
+
+
+// ---- Step H: combine pool + fallback, cap at top-3 ----
+
+Temp_QualifiedLevers:
+NoConcatenate
+LOAD * RESIDENT Temp_PoolLeversRanked   WHERE Lever_Rank <= 3;
+
+Concatenate (Temp_QualifiedLevers)
+LOAD * RESIDENT Temp_AllLeversRanked    WHERE Lever_Rank <= 3;
+
+DROP TABLE Temp_PoolLeversRanked;
+DROP TABLE Temp_AllLeversRanked;
+
+
+// ---- Step I: lever position maps (5 fields × 3 ranks = 15 maps) ----
+
+Lever1_Name_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Name
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+
+Lever1_Reasons_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+
+Lever1_Hours_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Hours
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+
+Lever1_GapPct_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Gap_Pct
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+
+Lever1_Streak_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Streak
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+
+Lever1_Parent_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Parent_Outcome
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+
+Lever2_Name_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Name
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
+
+Lever2_Reasons_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
+
+Lever2_Hours_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Hours
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
+
+Lever2_GapPct_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Gap_Pct
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
+
+Lever2_Streak_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Streak
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
+
+Lever2_Parent_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Parent_Outcome
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
+
+Lever3_Name_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Name
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
+
+Lever3_Reasons_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
+
+Lever3_Hours_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Hours
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
+
+Lever3_GapPct_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Gap_Pct
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
+
+Lever3_Streak_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Streak
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
+
+Lever3_Parent_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Parent_Outcome
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
+
+DROP TABLE Temp_QualifiedLevers;
+
+
+// ---- Step J: base grain + pivot to wide via ApplyMap ----
+
+MachineWeekSummary_Base:
+NoConcatenate
+LOAD DISTINCT
+    Plant,
+    [WC Object ID],
+    [Plant - WC],
+    Department,
+    Period_Start
+RESIDENT InsightRecords
+WHERE Period_Start = $(v2WeekStart)
+  AND (KPI_Category = 'Outcome' OR WildMatch(KPI_Category, 'Lever - *'));
+
+MachineWeekSummary:
+NoConcatenate
+LOAD
+    Plant,
+    [WC Object ID],
+    [Plant - WC],
+    Department,
+    Period_Start,
+    ApplyMap('PlantManager_Map',    Plant,                          Null())     as Manager_Email,
+    ApplyMap('PlantManager_CC_Map', Plant,                          Null())     as CC_List,
+    ApplyMap('TotalImpact_Map',     Plant & '|' & [WC Object ID],  Null())     as Total_OEE_Impact,
+    ApplyMap('Outcome1_Map',        Plant & '|' & [WC Object ID],  Null())     as Outcome_1_Name,
+    ApplyMap('Outcome1_Hours_Map',  Plant & '|' & [WC Object ID],  Null())     as Outcome_1_Hours,
+    ApplyMap('Outcome2_Map',        Plant & '|' & [WC Object ID],  Null())     as Outcome_2_Name,
+    ApplyMap('Outcome2_Hours_Map',  Plant & '|' & [WC Object ID],  Null())     as Outcome_2_Hours,
+    ApplyMap('Lever1_Name_Map',     Plant & '|' & [WC Object ID],  Null())     as Lever_1_Name,
+    ApplyMap('Lever1_Reasons_Map',  Plant & '|' & [WC Object ID],  Null())     as Lever_1_Reasons,
+    ApplyMap('Lever1_Hours_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_1_Hours,
+    ApplyMap('Lever1_GapPct_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_1_Gap_Pct,
+    ApplyMap('Lever1_Streak_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_1_Streak,
+    ApplyMap('Lever1_Parent_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_1_Parent_Outcome,
+    ApplyMap('Lever2_Name_Map',     Plant & '|' & [WC Object ID],  Null())     as Lever_2_Name,
+    ApplyMap('Lever2_Reasons_Map',  Plant & '|' & [WC Object ID],  Null())     as Lever_2_Reasons,
+    ApplyMap('Lever2_Hours_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_2_Hours,
+    ApplyMap('Lever2_GapPct_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_2_Gap_Pct,
+    ApplyMap('Lever2_Streak_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_2_Streak,
+    ApplyMap('Lever2_Parent_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_2_Parent_Outcome,
+    ApplyMap('Lever3_Name_Map',     Plant & '|' & [WC Object ID],  Null())     as Lever_3_Name,
+    ApplyMap('Lever3_Reasons_Map',  Plant & '|' & [WC Object ID],  Null())     as Lever_3_Reasons,
+    ApplyMap('Lever3_Hours_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Hours,
+    ApplyMap('Lever3_GapPct_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_3_Gap_Pct,
+    ApplyMap('Lever3_Streak_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_3_Streak,
+    ApplyMap('Lever3_Parent_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_3_Parent_Outcome
+RESIDENT MachineWeekSummary_Base;
+
+DROP TABLE MachineWeekSummary_Base;
+DROP MAPPING TABLE TotalImpact_Map;
+DROP MAPPING TABLE Outcome1_Map;
+DROP MAPPING TABLE Outcome1_Hours_Map;
+DROP MAPPING TABLE Outcome2_Map;
+DROP MAPPING TABLE Outcome2_Hours_Map;
+DROP MAPPING TABLE Lever1_Name_Map;
+DROP MAPPING TABLE Lever1_Reasons_Map;
+DROP MAPPING TABLE Lever1_Hours_Map;
+DROP MAPPING TABLE Lever1_GapPct_Map;
+DROP MAPPING TABLE Lever1_Streak_Map;
+DROP MAPPING TABLE Lever1_Parent_Map;
+DROP MAPPING TABLE Lever2_Name_Map;
+DROP MAPPING TABLE Lever2_Reasons_Map;
+DROP MAPPING TABLE Lever2_Hours_Map;
+DROP MAPPING TABLE Lever2_GapPct_Map;
+DROP MAPPING TABLE Lever2_Streak_Map;
+DROP MAPPING TABLE Lever2_Parent_Map;
+DROP MAPPING TABLE Lever3_Name_Map;
+DROP MAPPING TABLE Lever3_Reasons_Map;
+DROP MAPPING TABLE Lever3_Hours_Map;
+DROP MAPPING TABLE Lever3_GapPct_Map;
+DROP MAPPING TABLE Lever3_Streak_Map;
+DROP MAPPING TABLE Lever3_Parent_Map;
+
+
+// ---- Step K: store ----
+
+STORE MachineWeekSummary INTO [$(vSummaryQVDPath)] (qvd);
+STORE MachineWeekSummary INTO [$(vSummaryCSVPath)] (txt, delimiter is ',', embedded labels);
+
+DROP TABLE MachineWeekSummary;
+
+TRACE MachineWeekSummary stored — QVD and CSV written to SharePoint;

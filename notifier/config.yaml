@@ -1,0 +1,19 @@
+# SharePoint site and file configuration
+# sharepoint_site_id: obtain via Graph API — GET /sites/{hostname}:/{site-path}
+sharepoint_site_id: "YOUR_SITE_ID_HERE"
+# Path within the site's default document library drive, e.g.:
+# BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/MachineWeekSummary.csv
+sharepoint_file_path: "BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/MachineWeekSummary.csv"
+
+# How old the CSV is allowed to be before aborting and alerting (hours)
+freshness_max_hours: 24
+
+# Microsoft 365 shared mailbox UPN that sends the emails
+# The Azure AD app registration must have Mail.Send scoped to this mailbox
+sender_upn: "opex-insights@yourcompany.com"
+
+# Admin alert recipient — receives freshness-fail and send-error alerts
+admin_email: "admin@yourcompany.com"
+
+# Email subject line (Period_Start date is appended automatically)
+email_subject_prefix: "Weekly OEE Insight Digest"
