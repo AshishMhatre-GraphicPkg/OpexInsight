@@ -4130,7 +4130,7 @@ DROP MAPPING TABLE Lever3_Parent_Map;
 // ---- Step K: store ----
 
 STORE MachineWeekSummary INTO [$(vSummaryQVDPath)] (qvd);
-STORE MachineWeekSummary INTO [$(vSummaryCSVPath)] (txt, delimiter is ',', embedded labels);
+STORE MachineWeekSummary INTO [$(vSummaryCSVPath)] (txt, delimiter is ',');
 
 DROP TABLE MachineWeekSummary;
 
