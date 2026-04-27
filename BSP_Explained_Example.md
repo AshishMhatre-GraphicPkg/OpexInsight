@@ -398,14 +398,18 @@ Insights are suppressed when `GapHrs ≤ 0` (machine is at or above BSP that wee
 
 ### Field Guide — Key Columns in Plain English
 
-#### `KPI_Category` — Is this KPI something you can directly fix?
+#### `KPI_Category` — Is this KPI something you can directly fix, and which Outcome does it move?
 
 | Value | KPIs | What to do with it |
 |---|---|---|
 | **Outcome** | OEE, Availability, Quality, Downtime %, Scrap Rate, Net Throughput Rate | Confirms *that* there is a problem. Not directly actionable — these are composite results driven by other causes. |
-| **Lever** | Performance, Speed, Setup Hrs/Event, Setup Time %, all reason rows, all feeder/blanket rows | Tells you *what* to fix. These are root-cause drivers the team can act on. |
+| **Lever - OEE** | Performance | Root-cause driver that directly moves OEE. |
+| **Lever - Net Throughput Rate** | Speed | Root-cause driver that directly moves Net Throughput Rate. |
+| **Lever - Availability** | Setup Hrs/Event, Setup Time % | Root-cause drivers that directly move Availability (setup time eats availability). |
+| **Lever - Downtime %** | Downtime Reason, Feeder (×3), Blanket (×3) | Root-cause drivers that directly move Downtime %. |
+| **Lever - Scrap Rate** | Scrap Reason | Root-cause driver that directly moves Scrap Rate. |
 
-The weekly action list in the front-end filters to `KPI_Category = 'Lever'`. Outcome rows are preserved for scorecard context but are not the prioritised action list.
+The weekly action list in the front-end filters to `WildMatch(KPI_Category, 'Lever - *')`. Outcome rows are preserved for scorecard context. The `'Lever - <Outcome>'` format enables the weekly narrative: *"Machine X lost N hours driven by Outcome A — focus on these levers to move it."* Group lever rows by `Replace(KPI_Category, 'Lever - ', '')` to pair each lever with its parent Outcome.
 
 ---
 
@@ -510,7 +514,7 @@ After the main KPI rows are built (Section 42), Section 44 evaluates per-reason 
 | Field | Value |
 |---|---|
 | **KPI_Name** | Downtime Reason |
-| **KPI_Category** | **Lever** — all reason rows are Lever |
+| **KPI_Category** | **Lever - Downtime %** — Downtime Reason rows point at their parent Outcome |
 | **Reasons** | **Mechanical - Belt Slip** |
 | **Cur_Actual** | 0.082 (8.2% downtime rate for this reason) |
 | **BSP_Benchmark** | 0.041 (4.1% — P25 reason BSP, lower-is-better) |
@@ -537,7 +541,7 @@ The four `BSP_*` fields are Null on reason rows. The machine-level BSP pipeline 
 
 4. **PoolSize tells you how thin the data is behind the benchmark.** Below 15 means a single unusual run can shift the BSP materially. Above 30 means the benchmark is well-supported.
 
-5. **OEE_Impact is in hours, so it ranks across all KPIs and machines directly.** A Setup insight costing 5.22 hrs/week and an OEE insight costing 5.22 hrs/week are equally urgent. The front-end weekly action list filters to `KPI_Category = 'Lever'` and sorts by OEE_Impact descending.
+5. **OEE_Impact is in hours, so it ranks across all KPIs and machines directly.** A Setup insight costing 5.22 hrs/week and an OEE insight costing 5.22 hrs/week are equally urgent. The front-end weekly action list filters to `WildMatch(KPI_Category, 'Lever - *')` and sorts by OEE_Impact descending. The `'Lever - <Outcome>'` format lets the narrative pair each lever to its parent Outcome: *"Your top Outcome gap this week is Downtime % — focus on these Downtime Reason / Feeder / Blanket levers to close it."*
 
 ---
 
@@ -622,7 +626,8 @@ The four `BSP_*` fields are Null on reason rows. The machine-level BSP pipeline 
                  ║  Grain: Plant+WC+KPI_Name+Reasons ║
                  ║  GapHrs = gap × time denominator  ║
                  ║  OEE_Impact = GapHrs×(1+Streak/4) ║
-                 ║  KPI_Category: Outcome or Lever   ║
+                 ║  KPI_Category: Outcome or         ║
+                 ║    Lever - <Parent Outcome>       ║
                  ║  Ranked by OEE_Impact DESC        ║
                  ╚═══════════════════════════════════╝
 ```
