@@ -2806,7 +2806,7 @@ DROP MAPPING TABLE BSP_L3_BlanketPer10K_Map;
 //
 // Scope: Downtime (tPltRsnKey) and Scrap (sPltRsnKey) only.
 // Feeder/Blanket streaks are not computed here — those rows
-// carry Streak_4wk = 0 (OEE_Impact reduces to pure Gap).
+// carry Streak_4wk = 0 (Sheet_Impact reduces to pure Sheet_Gap).
 // ============================================================
 
 // -- Weekly SchedHrs per machine (denominator for downtime-reason weekly rate)
@@ -2999,7 +2999,7 @@ LOAD
     Num(Cur_OEE,         '0.00%')                                                               as Cur_Actual_Fmt,
     Num(Cur_BSP_OEE,     '0.00%')                                                               as BSP_Benchmark_Fmt,
     (Cur_BSP_OEE - Cur_OEE) / Cur_BSP_OEE * 100                                                 as Gap_Pct,
-    (Cur_BSP_OEE - Cur_OEE) * Cur_SchedHours                                                    as GapHrs,
+    (Cur_BSP_OEE - Cur_OEE) * Cur_SchedHours * Cur_BSP_Speed                                   as Sheet_Gap,
     RangeMin(If(IsNull(Streak_OEE), 0, Streak_OEE), 4)                                          as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3029,7 +3029,7 @@ LOAD
     Num(Cur_Availability,     '0.00%')                                                          as Cur_Actual_Fmt,
     Num(Cur_BSP_Availability, '0.00%')                                                          as BSP_Benchmark_Fmt,
     (Cur_BSP_Availability - Cur_Availability) / Cur_BSP_Availability * 100                      as Gap_Pct,
-    (Cur_BSP_Availability - Cur_Availability) * Cur_SchedHours                                  as GapHrs,
+    (Cur_BSP_Availability - Cur_Availability) * Cur_SchedHours * Cur_BSP_Speed                 as Sheet_Gap,
     RangeMin(If(IsNull(Streak_Availability), 0, Streak_Availability), 4)                        as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3059,7 +3059,7 @@ LOAD
     Num(Cur_Performance,     '0.00%')                                                           as Cur_Actual_Fmt,
     Num(Cur_BSP_Performance, '0.00%')                                                           as BSP_Benchmark_Fmt,
     (Cur_BSP_Performance - Cur_Performance) / Cur_BSP_Performance * 100                         as Gap_Pct,
-    (Cur_BSP_Performance - Cur_Performance) * Cur_SchedHours                                    as GapHrs,
+    (Cur_BSP_Performance - Cur_Performance) * Cur_SchedHours * Cur_BSP_Speed                   as Sheet_Gap,
     RangeMin(If(IsNull(Streak_Performance), 0, Streak_Performance), 4)                          as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3089,7 +3089,7 @@ LOAD
     Num(Cur_Quality,     '0.00%')                                                               as Cur_Actual_Fmt,
     Num(Cur_BSP_Quality, '0.00%')                                                               as BSP_Benchmark_Fmt,
     (Cur_BSP_Quality - Cur_Quality) / Cur_BSP_Quality * 100                                     as Gap_Pct,
-    (Cur_BSP_Quality - Cur_Quality) * Cur_SchedHours                                            as GapHrs,
+    (Cur_BSP_Quality - Cur_Quality) * Cur_RunHours * Cur_BSP_Speed                             as Sheet_Gap,
     RangeMin(If(IsNull(Streak_Quality), 0, Streak_Quality), 4)                                  as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3119,7 +3119,7 @@ LOAD
     Cur_Speed                                                                                   as Cur_Actual_Fmt,
     Cur_BSP_Speed                                                                               as BSP_Benchmark_Fmt,
     (Cur_BSP_Speed - Cur_Speed) / Cur_BSP_Speed * 100                                           as Gap_Pct,
-    If(Cur_BSP_Speed > 0, (Cur_BSP_Speed - Cur_Speed) / Cur_BSP_Speed * Cur_RunHours, 0)       as GapHrs,
+    If(Cur_BSP_Speed > 0, (Cur_BSP_Speed - Cur_Speed) * Cur_RunHours, 0)                      as Sheet_Gap,
     RangeMin(If(IsNull(Streak_Speed), 0, Streak_Speed), 4)                                      as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3150,7 +3150,7 @@ LOAD
     Cur_BSP_NetThroughput                                                                       as BSP_Benchmark_Fmt,
     (Cur_BSP_NetThroughput - Cur_NetThroughput) / Cur_BSP_NetThroughput * 100                  as Gap_Pct,
     If(Cur_BSP_NetThroughput > 0,
-        (Cur_BSP_NetThroughput - Cur_NetThroughput) / Cur_BSP_NetThroughput * (Cur_RunHours + Cur_DowntimeHrs), 0) as GapHrs,
+        (Cur_BSP_NetThroughput - Cur_NetThroughput) * (Cur_RunHours + Cur_DowntimeHrs), 0)                        as Sheet_Gap,
     RangeMin(If(IsNull(Streak_NetThroughput), 0, Streak_NetThroughput), 4)                      as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3180,7 +3180,7 @@ LOAD
     Num(Cur_DowntimePct,     '0.00%')                                                           as Cur_Actual_Fmt,
     Num(Cur_BSP_DowntimePct, '0.00%')                                                           as BSP_Benchmark_Fmt,
     (Cur_DowntimePct - Cur_BSP_DowntimePct) / Cur_BSP_DowntimePct * 100                         as Gap_Pct,
-    (Cur_DowntimePct - Cur_BSP_DowntimePct) * Cur_SchedHours                                    as GapHrs,
+    (Cur_DowntimePct - Cur_BSP_DowntimePct) * Cur_SchedHours * Cur_BSP_Speed                   as Sheet_Gap,
     RangeMin(If(IsNull(Streak_DowntimePct), 0, Streak_DowntimePct), 4)                          as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3210,7 +3210,7 @@ LOAD
     Num(Cur_ScrapRate,     '0.00%')                                                             as Cur_Actual_Fmt,
     Num(Cur_BSP_ScrapRate, '0.00%')                                                             as BSP_Benchmark_Fmt,
     (Cur_ScrapRate - Cur_BSP_ScrapRate) / Cur_BSP_ScrapRate * 100                               as Gap_Pct,
-    (Cur_ScrapRate - Cur_BSP_ScrapRate) * Cur_SchedHours                                        as GapHrs,
+    (Cur_ScrapRate - Cur_BSP_ScrapRate) * Cur_SchedHours * Cur_BSP_Speed                       as Sheet_Gap,
     RangeMin(If(IsNull(Streak_ScrapRate), 0, Streak_ScrapRate), 4)                              as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3240,7 +3240,7 @@ LOAD
     Cur_SetupHrsPerEvent                                                                        as Cur_Actual_Fmt,
     Cur_BSP_SetupHrsPerEvent                                                                    as BSP_Benchmark_Fmt,
     (Cur_SetupHrsPerEvent - Cur_BSP_SetupHrsPerEvent) / Cur_BSP_SetupHrsPerEvent * 100          as Gap_Pct,
-    (Cur_SetupHrsPerEvent - Cur_BSP_SetupHrsPerEvent) * Cur_SetupEventCount                     as GapHrs,
+    (Cur_SetupHrsPerEvent - Cur_BSP_SetupHrsPerEvent) * Cur_SetupEventCount * Cur_BSP_Speed     as Sheet_Gap,
     RangeMin(If(IsNull(Streak_SetupHrsPerEvent), 0, Streak_SetupHrsPerEvent), 4)                as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3270,7 +3270,7 @@ LOAD
     Num(Cur_SetupTimePct,     '0.00%')                                                          as Cur_Actual_Fmt,
     Num(Cur_BSP_SetupTimePct, '0.00%')                                                          as BSP_Benchmark_Fmt,
     (Cur_SetupTimePct - Cur_BSP_SetupTimePct) / Cur_BSP_SetupTimePct * 100                      as Gap_Pct,
-    (Cur_SetupTimePct - Cur_BSP_SetupTimePct) * Cur_SchedHours                                  as GapHrs,
+    (Cur_SetupTimePct - Cur_BSP_SetupTimePct) * Cur_SchedHours * Cur_BSP_Speed                 as Sheet_Gap,
     RangeMin(If(IsNull(Streak_SetupTimePct), 0, Streak_SetupTimePct), 4)                        as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3285,19 +3285,29 @@ WHERE Not IsNull(Cur_BSP_SetupTimePct) AND Not IsNull(Cur_SetupTimePct)
     AND Cur_SetupTimePct > Cur_BSP_SetupTimePct
     AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
+Mach_BSPSpeed_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID],
+    Cur_BSP_Speed
+RESIDENT CurrentPeriod;
+
 DROP TABLE CurrentPeriod;
 
 // ============================================================
-// SECTION 43: UNIFIED OEE IMPACT SCORING
-// OEE_Impact = GapHrs * (1 + Streak_4wk / 4) in scheduled hours
-// GapHrs is computed per-KPI as true absolute gap in hours:
-//   Pct KPIs (OEE/Avail/Perf/Quality/DT%/ScrapRate/SetupTime%):
-//     GapHrs = (BSP - Actual) * Cur_SchedHours
+// SECTION 43: UNIFIED SHEET IMPACT SCORING
+// Sheet_Impact = Sheet_Gap * (1 + Streak_4wk / 4) in sheets lost vs BSP
+// Sheet_Gap is computed per-KPI:
+//   Pct KPIs (OEE/Avail/Perf/DT%/ScrapRate/SetupTime%/SetupHrs):
+//     Sheet_Gap = (BSP - Actual) * Cur_SchedHours * BSP_Speed
+//   Quality:
+//     Sheet_Gap = (BSP - Actual) * Cur_RunHours * BSP_Speed
 //   Speed:
-//     GapHrs = (BSP - Actual) / BSP * Cur_RunHours
+//     Sheet_Gap = (BSP_Speed - Cur_Speed) * Cur_RunHours  (sheets directly)
+//   Net Throughput Rate:
+//     Sheet_Gap = (BSP_NT - Cur_NT) * (Cur_RunHours + Cur_DowntimeHrs)  (sheets directly)
 //   Setup Hrs/Event:
-//     GapHrs = (Actual - BSP) * Cur_SetupEventCount
-// Streak_4wk capped at 4 (doubles OEE_Impact when trend is 4-of-4)
+//     Sheet_Gap = (Actual - BSP) * Cur_SetupEventCount * BSP_Speed
+// Streak_4wk capped at 4 (doubles Sheet_Impact when trend is 4-of-4)
 // ============================================================
 
 InsightRecords_Scored:
@@ -3314,7 +3324,7 @@ LOAD
     Cur_Actual,
     BSP_Benchmark,
     Gap_Pct,
-    GapHrs,
+    Sheet_Gap,
     Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
@@ -3325,12 +3335,12 @@ LOAD
     BSP_Benchmark_Fmt,
     Null()                                                                                      as Reasons,
     Round(
-        GapHrs
+        Sheet_Gap
         * (1 + RangeMin(If(IsNull(Streak_4wk), 0, Streak_4wk), 4) / 4),
         0.01
-    )                                                                                           as OEE_Impact
+    )                                                                                           as Sheet_Impact
 RESIDENT InsightRecords_Raw
-WHERE GapHrs > 0;
+WHERE Sheet_Gap > 0;
 
 DROP TABLE InsightRecords_Raw;
 
@@ -3377,10 +3387,11 @@ LOAD
         AND Cur_ReasonDownHours / TotalSchedHrs_2wk > Rsn_BSP_DownPct,
         Round(
             (Cur_ReasonDownHours / TotalSchedHrs_2wk - Rsn_BSP_DownPct) * TotalSchedHrs_2wk
+            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0)
             * (1 + RangeMin(ApplyMap('Rsn_Down_Streak_Map',
                 Plant & '|' & [WC Object ID] & '|' & tPltRsnKey, 0), 4) / 4),
             0.01
-        ), 0)                                                                                   as OEE_Impact
+        ), 0)                                                                                   as Sheet_Impact
 RESIDENT CurPeriod_DwnReason
 WHERE Not IsNull(Rsn_BSP_DownPct);
 
@@ -3411,10 +3422,11 @@ LOAD
         Round(
             (Cur_ReasonScrapQty / TotalQty_2wk - Rsn_BSP_ScrapPct)
             * ApplyMap('CurSchedHrs_Map', Plant & '|' & [WC Object ID], 0)
+            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0)
             * (1 + RangeMin(ApplyMap('Rsn_Scrap_Streak_Map',
                 Plant & '|' & [WC Object ID] & '|' & sPltRsnKey, 0), 4) / 4),
             0.01
-        ), 0)                                                                                   as OEE_Impact
+        ), 0)                                                                                   as Sheet_Impact
 RESIDENT CurPeriod_ScrReason
 WHERE Not IsNull(Rsn_BSP_ScrapPct);
 
@@ -3427,8 +3439,8 @@ DROP MAPPING TABLE Rsn_Scrap_Streak_Map;
 // ============================================================
 // SECTION 44B: FEEDER TRIPS INSIGHT RECORDS (3 METRICS)
 // All lower-is-better; fire when Cur_Actual > BSP_Benchmark
-// OEE_Impact = GapHrs (Streak_4wk = 0 — no 4-week trend pipeline
-// for feeder metrics; OEE_Impact reduces to pure Gap in hours)
+// Sheet_Impact = Sheet_Gap (Streak_4wk = 0 — no 4-week trend pipeline
+// for feeder metrics; Sheet_Impact reduces to pure sheets gap)
 // Ratio KPIs (Count Rate, Per10K) pass raw numeric to Cur_Actual_Fmt
 // ============================================================
 
@@ -3455,8 +3467,9 @@ LOAD
     If(Not IsNull(Feeder_BSP_DTPct) AND Feeder_BSP_DTPct > 0
         AND TotalSchedHrs_2wk > 0
         AND Cur_FeederDownHours / TotalSchedHrs_2wk > Feeder_BSP_DTPct,
-        Round((Cur_FeederDownHours / TotalSchedHrs_2wk - Feeder_BSP_DTPct) * TotalSchedHrs_2wk, 0.01),
-        0)                                                                                       as OEE_Impact
+        Round((Cur_FeederDownHours / TotalSchedHrs_2wk - Feeder_BSP_DTPct) * TotalSchedHrs_2wk
+            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0), 0.01),
+        0)                                                                                       as Sheet_Impact
 RESIDENT CurPeriod_Feeder
 WHERE Not IsNull(Feeder_BSP_DTPct)
     AND TotalSchedHrs_2wk > 0
@@ -3487,9 +3500,10 @@ LOAD
         AND Cur_FeederDownCount / TotalSchedHrs_2wk > Feeder_BSP_CntRate,
         Round(
             (Cur_FeederDownCount - Feeder_BSP_CntRate * TotalSchedHrs_2wk)
-            * If(Cur_FeederDownCount > 0, Cur_FeederDownHours / Cur_FeederDownCount, 0),
+            * If(Cur_FeederDownCount > 0, Cur_FeederDownHours / Cur_FeederDownCount, 0)
+            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0),
             0.01),
-        0)                                                                                       as OEE_Impact
+        0)                                                                                       as Sheet_Impact
 RESIDENT CurPeriod_Feeder
 WHERE Not IsNull(Feeder_BSP_CntRate)
     AND TotalSchedHrs_2wk > 0
@@ -3520,9 +3534,10 @@ LOAD
         AND Cur_FeederDownCount / Cur_FeederTotalQty * 10000 > Feeder_BSP_Per10K,
         Round(
             (Cur_FeederDownCount - Feeder_BSP_Per10K * Cur_FeederTotalQty / 10000)
-            * If(Cur_FeederDownCount > 0, Cur_FeederDownHours / Cur_FeederDownCount, 0),
+            * If(Cur_FeederDownCount > 0, Cur_FeederDownHours / Cur_FeederDownCount, 0)
+            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0),
             0.01),
-        0)                                                                                       as OEE_Impact
+        0)                                                                                       as Sheet_Impact
 RESIDENT CurPeriod_Feeder
 WHERE Not IsNull(Feeder_BSP_Per10K)
     AND Cur_FeederTotalQty > 0
@@ -3533,7 +3548,7 @@ DROP TABLE CurPeriod_Feeder;
 
 // ============================================================
 // SECTION 44C: BLANKET WASHES INSIGHT RECORDS (3 METRICS)
-// Same pattern as Feeder (Streak_4wk = 0, OEE_Impact = GapHrs)
+// Same pattern as Feeder (Streak_4wk = 0, Sheet_Impact = Sheet_Gap in sheets)
 // ============================================================
 
 Concatenate (ReasonInsights_Raw)
@@ -3559,8 +3574,9 @@ LOAD
     If(Not IsNull(Blanket_BSP_DTPct) AND Blanket_BSP_DTPct > 0
         AND TotalSchedHrs_2wk > 0
         AND Cur_BlanketDownHours / TotalSchedHrs_2wk > Blanket_BSP_DTPct,
-        Round((Cur_BlanketDownHours / TotalSchedHrs_2wk - Blanket_BSP_DTPct) * TotalSchedHrs_2wk, 0.01),
-        0)                                                                                       as OEE_Impact
+        Round((Cur_BlanketDownHours / TotalSchedHrs_2wk - Blanket_BSP_DTPct) * TotalSchedHrs_2wk
+            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0), 0.01),
+        0)                                                                                       as Sheet_Impact
 RESIDENT CurPeriod_Blanket
 WHERE Not IsNull(Blanket_BSP_DTPct)
     AND TotalSchedHrs_2wk > 0
@@ -3591,9 +3607,10 @@ LOAD
         AND Cur_BlanketDownCount / TotalSchedHrs_2wk > Blanket_BSP_CntRate,
         Round(
             (Cur_BlanketDownCount - Blanket_BSP_CntRate * TotalSchedHrs_2wk)
-            * If(Cur_BlanketDownCount > 0, Cur_BlanketDownHours / Cur_BlanketDownCount, 0),
+            * If(Cur_BlanketDownCount > 0, Cur_BlanketDownHours / Cur_BlanketDownCount, 0)
+            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0),
             0.01),
-        0)                                                                                       as OEE_Impact
+        0)                                                                                       as Sheet_Impact
 RESIDENT CurPeriod_Blanket
 WHERE Not IsNull(Blanket_BSP_CntRate)
     AND TotalSchedHrs_2wk > 0
@@ -3624,9 +3641,10 @@ LOAD
         AND Cur_BlanketDownCount / Cur_BlanketTotalQty * 10000 > Blanket_BSP_Per10K,
         Round(
             (Cur_BlanketDownCount - Blanket_BSP_Per10K * Cur_BlanketTotalQty / 10000)
-            * If(Cur_BlanketDownCount > 0, Cur_BlanketDownHours / Cur_BlanketDownCount, 0),
+            * If(Cur_BlanketDownCount > 0, Cur_BlanketDownHours / Cur_BlanketDownCount, 0)
+            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0),
             0.01),
-        0)                                                                                       as OEE_Impact
+        0)                                                                                       as Sheet_Impact
 RESIDENT CurPeriod_Blanket
 WHERE Not IsNull(Blanket_BSP_Per10K)
     AND Cur_BlanketTotalQty > 0
@@ -3635,17 +3653,18 @@ WHERE Not IsNull(Blanket_BSP_Per10K)
 DROP TABLE CurPeriod_Blanket;
 
 DROP MAPPING TABLE CurSchedHrs_Map;
+DROP MAPPING TABLE Mach_BSPSpeed_Map;
 
 // ============================================================
 // SECTION 45: RANK MAIN KPI INSIGHTS WITHIN PLANT
-// Ranked by OEE_Impact DESC
+// Ranked by Sheet_Impact DESC
 // ============================================================
 
 InsightRecords_Sorted:
 NoConcatenate
 LOAD *
 RESIDENT InsightRecords_Scored
-ORDER BY Plant, OEE_Impact DESC;
+ORDER BY Plant, Sheet_Impact DESC;
 
 DROP TABLE InsightRecords_Scored;
 
@@ -3667,7 +3686,7 @@ LOAD
     BSP_Benchmark_Fmt,
     Gap_Pct,
     Streak_4wk,
-    OEE_Impact,
+    Sheet_Impact,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
     Cur_BSP_PoolSize,
@@ -3681,7 +3700,7 @@ DROP TABLE InsightRecords_Sorted;
 
 // ============================================================
 // SECTION 46: RANK REASON INSIGHTS WITHIN MACHINE
-// Ranked by OEE_Impact DESC within (Plant, WC, KPI_Name)
+// Ranked by Sheet_Impact DESC within (Plant, WC, KPI_Name)
 // Top-3 cap applied ONLY to 'Downtime Reason' and 'Scrap Reason'
 // rows — per user spec items 1a / 1b. Feeder/Blanket rows are
 // not capped (one row per machine per metric anyway).
@@ -3692,7 +3711,7 @@ NoConcatenate
 LOAD *
 RESIDENT ReasonInsights_Raw
 WHERE Gap_Pct > 0
-ORDER BY Plant, "WC Object ID", KPI_Name, OEE_Impact DESC;
+ORDER BY Plant, "WC Object ID", KPI_Name, Sheet_Impact DESC;
 
 DROP TABLE ReasonInsights_Raw;
 
@@ -3714,7 +3733,7 @@ LOAD
     BSP_Benchmark_Fmt,
     Gap_Pct,
     Streak_4wk,
-    OEE_Impact,
+    Sheet_Impact,
     Null()                                                                                      as Cur_BSP_CoveragePct,
     Null()                                                                                      as Cur_BSP_ConfScore,
     Null()                                                                                      as Cur_BSP_PoolSize,
@@ -3803,7 +3822,7 @@ TRACE InsightRecords stored successfully — incremental append complete;
 // Materialises a narrow, pivot-wide summary from InsightRecords
 // for the current period only (Period_Start = v2WeekStart).
 // Output: one row per Plant|WC|Period_Start with:
-//   - top-2 Outcome rows (by OEE_Impact DESC)
+//   - top-2 Outcome rows (by Sheet_Impact DESC)
 //   - top-3 Lever rows (from top-2 Outcomes' pool; fall back to
 //     top-3 overall if that pool is empty for the machine)
 // Stored as QVD (Qlik mart) + CSV (Python notifier consumption).
@@ -3811,14 +3830,14 @@ TRACE InsightRecords stored successfully — incremental append complete;
 // Section 48 RENAME) — all reads filter to $(v2WeekStart).
 // ============================================================
 
-// ---- Step A: total OEE_Impact per machine-week ----
+// ---- Step A: total Sheet_Impact per machine-week ----
 
 Temp_TotalImpact:
 NoConcatenate
 LOAD
     Plant,
     [WC Object ID],
-    Sum(OEE_Impact)     as Total_OEE_Impact
+    Sum(Sheet_Impact)   as Total_Sheet_Impact
 RESIDENT InsightRecords
 WHERE Period_Start = $(v2WeekStart)
 GROUP BY Plant, [WC Object ID];
@@ -3826,7 +3845,7 @@ GROUP BY Plant, [WC Object ID];
 TotalImpact_Map:
 MAPPING LOAD
     Plant & '|' & [WC Object ID],
-    Total_OEE_Impact
+    Total_Sheet_Impact
 RESIDENT Temp_TotalImpact;
 
 DROP TABLE Temp_TotalImpact;
@@ -3841,12 +3860,12 @@ LOAD
     Plant,
     [WC Object ID],
     KPI_Name                                                        as Outcome_Name,
-    OEE_Impact                                                      as Outcome_Hours,
+    Sheet_Impact                                                    as Outcome_Sheets,
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID'),
        Peek('Outcome_Rank') + 1, 1)                                 as Outcome_Rank
 RESIDENT InsightRecords
 WHERE Period_Start = $(v2WeekStart) AND KPI_Category = 'Outcome'
-ORDER BY Plant, [WC Object ID], OEE_Impact DESC;
+ORDER BY Plant, [WC Object ID], Sheet_Impact DESC;
 
 
 // ---- Step C: outcome position maps ----
@@ -3858,10 +3877,10 @@ MAPPING LOAD
 RESIDENT Temp_OutcomeRanked
 WHERE Outcome_Rank = 1;
 
-Outcome1_Hours_Map:
+Outcome1_Sheets_Map:
 MAPPING LOAD
     Plant & '|' & [WC Object ID],
-    Outcome_Hours
+    Outcome_Sheets
 RESIDENT Temp_OutcomeRanked
 WHERE Outcome_Rank = 1;
 
@@ -3872,10 +3891,10 @@ MAPPING LOAD
 RESIDENT Temp_OutcomeRanked
 WHERE Outcome_Rank = 2;
 
-Outcome2_Hours_Map:
+Outcome2_Sheets_Map:
 MAPPING LOAD
     Plant & '|' & [WC Object ID],
-    Outcome_Hours
+    Outcome_Sheets
 RESIDENT Temp_OutcomeRanked
 WHERE Outcome_Rank = 2;
 
@@ -3892,7 +3911,7 @@ LOAD
     [WC Object ID],
     KPI_Name                                                        as Lever_Name,
     Reasons                                                         as Lever_Reasons,
-    OEE_Impact                                                      as Lever_Hours,
+    Sheet_Impact                                                    as Lever_Sheets,
     Gap_Pct                                                         as Lever_Gap_Pct,
     Streak_4wk                                                      as Lever_Streak,
     Replace(KPI_Category, 'Lever - ', '')                           as Lever_Parent_Outcome
@@ -3925,14 +3944,14 @@ LOAD
     [WC Object ID],
     Lever_Name,
     Lever_Reasons,
-    Lever_Hours,
+    Lever_Sheets,
     Lever_Gap_Pct,
     Lever_Streak,
     Lever_Parent_Outcome,
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID'),
        Peek('Lever_Rank') + 1, 1)                                   as Lever_Rank
 RESIDENT Temp_PoolLevers
-ORDER BY Plant, [WC Object ID], Lever_Hours DESC;
+ORDER BY Plant, [WC Object ID], Lever_Sheets DESC;
 
 DROP TABLE Temp_PoolLevers;
 
@@ -3947,7 +3966,7 @@ LOAD
     [WC Object ID],
     KPI_Name                                                        as Lever_Name,
     Reasons                                                         as Lever_Reasons,
-    OEE_Impact                                                      as Lever_Hours,
+    Sheet_Impact                                                    as Lever_Sheets,
     Gap_Pct                                                         as Lever_Gap_Pct,
     Streak_4wk                                                      as Lever_Streak,
     Replace(KPI_Category, 'Lever - ', '')                           as Lever_Parent_Outcome,
@@ -3957,7 +3976,7 @@ RESIDENT InsightRecords
 WHERE Period_Start = $(v2WeekStart)
   AND WildMatch(KPI_Category, 'Lever - *')
   AND ApplyMap('HasPoolLevers_Map', Plant & '|' & [WC Object ID], 0) = 0
-ORDER BY Plant, [WC Object ID], OEE_Impact DESC;
+ORDER BY Plant, [WC Object ID], Sheet_Impact DESC;
 
 DROP MAPPING TABLE HasPoolLevers_Map;
 
@@ -3985,8 +4004,8 @@ Lever1_Reasons_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
 RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
 
-Lever1_Hours_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Hours
+Lever1_Sheets_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Sheets
 RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
 
 Lever1_GapPct_Map:
@@ -4009,8 +4028,8 @@ Lever2_Reasons_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
 RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
 
-Lever2_Hours_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Hours
+Lever2_Sheets_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Sheets
 RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
 
 Lever2_GapPct_Map:
@@ -4033,8 +4052,8 @@ Lever3_Reasons_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
 RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
 
-Lever3_Hours_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Hours
+Lever3_Sheets_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Sheets
 RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
 
 Lever3_GapPct_Map:
@@ -4076,52 +4095,52 @@ LOAD
     Period_Start,
     ApplyMap('PlantManager_Map',    Plant,                          Null())     as Manager_Email,
     ApplyMap('PlantManager_CC_Map', Plant,                          Null())     as CC_List,
-    ApplyMap('TotalImpact_Map',     Plant & '|' & [WC Object ID],  Null())     as Total_OEE_Impact,
-    ApplyMap('Outcome1_Map',        Plant & '|' & [WC Object ID],  Null())     as Outcome_1_Name,
-    ApplyMap('Outcome1_Hours_Map',  Plant & '|' & [WC Object ID],  Null())     as Outcome_1_Hours,
-    ApplyMap('Outcome2_Map',        Plant & '|' & [WC Object ID],  Null())     as Outcome_2_Name,
-    ApplyMap('Outcome2_Hours_Map',  Plant & '|' & [WC Object ID],  Null())     as Outcome_2_Hours,
-    ApplyMap('Lever1_Name_Map',     Plant & '|' & [WC Object ID],  Null())     as Lever_1_Name,
-    ApplyMap('Lever1_Reasons_Map',  Plant & '|' & [WC Object ID],  Null())     as Lever_1_Reasons,
-    ApplyMap('Lever1_Hours_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_1_Hours,
-    ApplyMap('Lever1_GapPct_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_1_Gap_Pct,
-    ApplyMap('Lever1_Streak_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_1_Streak,
-    ApplyMap('Lever1_Parent_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_1_Parent_Outcome,
-    ApplyMap('Lever2_Name_Map',     Plant & '|' & [WC Object ID],  Null())     as Lever_2_Name,
-    ApplyMap('Lever2_Reasons_Map',  Plant & '|' & [WC Object ID],  Null())     as Lever_2_Reasons,
-    ApplyMap('Lever2_Hours_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_2_Hours,
-    ApplyMap('Lever2_GapPct_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_2_Gap_Pct,
-    ApplyMap('Lever2_Streak_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_2_Streak,
-    ApplyMap('Lever2_Parent_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_2_Parent_Outcome,
-    ApplyMap('Lever3_Name_Map',     Plant & '|' & [WC Object ID],  Null())     as Lever_3_Name,
-    ApplyMap('Lever3_Reasons_Map',  Plant & '|' & [WC Object ID],  Null())     as Lever_3_Reasons,
-    ApplyMap('Lever3_Hours_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Hours,
-    ApplyMap('Lever3_GapPct_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_3_Gap_Pct,
-    ApplyMap('Lever3_Streak_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_3_Streak,
-    ApplyMap('Lever3_Parent_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_3_Parent_Outcome
+    ApplyMap('TotalImpact_Map',      Plant & '|' & [WC Object ID],  Null())     as Total_Sheet_Impact,
+    ApplyMap('Outcome1_Map',         Plant & '|' & [WC Object ID],  Null())     as Outcome_1_Name,
+    ApplyMap('Outcome1_Sheets_Map',  Plant & '|' & [WC Object ID],  Null())     as Outcome_1_Sheets,
+    ApplyMap('Outcome2_Map',         Plant & '|' & [WC Object ID],  Null())     as Outcome_2_Name,
+    ApplyMap('Outcome2_Sheets_Map',  Plant & '|' & [WC Object ID],  Null())     as Outcome_2_Sheets,
+    ApplyMap('Lever1_Name_Map',      Plant & '|' & [WC Object ID],  Null())     as Lever_1_Name,
+    ApplyMap('Lever1_Reasons_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_1_Reasons,
+    ApplyMap('Lever1_Sheets_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_1_Sheets,
+    ApplyMap('Lever1_GapPct_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_1_Gap_Pct,
+    ApplyMap('Lever1_Streak_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_1_Streak,
+    ApplyMap('Lever1_Parent_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_1_Parent_Outcome,
+    ApplyMap('Lever2_Name_Map',      Plant & '|' & [WC Object ID],  Null())     as Lever_2_Name,
+    ApplyMap('Lever2_Reasons_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_2_Reasons,
+    ApplyMap('Lever2_Sheets_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_2_Sheets,
+    ApplyMap('Lever2_GapPct_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_2_Gap_Pct,
+    ApplyMap('Lever2_Streak_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_2_Streak,
+    ApplyMap('Lever2_Parent_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_2_Parent_Outcome,
+    ApplyMap('Lever3_Name_Map',      Plant & '|' & [WC Object ID],  Null())     as Lever_3_Name,
+    ApplyMap('Lever3_Reasons_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_3_Reasons,
+    ApplyMap('Lever3_Sheets_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Sheets,
+    ApplyMap('Lever3_GapPct_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Gap_Pct,
+    ApplyMap('Lever3_Streak_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Streak,
+    ApplyMap('Lever3_Parent_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Parent_Outcome
 RESIDENT MachineWeekSummary_Base;
 
 DROP TABLE MachineWeekSummary_Base;
 DROP MAPPING TABLE TotalImpact_Map;
 DROP MAPPING TABLE Outcome1_Map;
-DROP MAPPING TABLE Outcome1_Hours_Map;
+DROP MAPPING TABLE Outcome1_Sheets_Map;
 DROP MAPPING TABLE Outcome2_Map;
-DROP MAPPING TABLE Outcome2_Hours_Map;
+DROP MAPPING TABLE Outcome2_Sheets_Map;
 DROP MAPPING TABLE Lever1_Name_Map;
 DROP MAPPING TABLE Lever1_Reasons_Map;
-DROP MAPPING TABLE Lever1_Hours_Map;
+DROP MAPPING TABLE Lever1_Sheets_Map;
 DROP MAPPING TABLE Lever1_GapPct_Map;
 DROP MAPPING TABLE Lever1_Streak_Map;
 DROP MAPPING TABLE Lever1_Parent_Map;
 DROP MAPPING TABLE Lever2_Name_Map;
 DROP MAPPING TABLE Lever2_Reasons_Map;
-DROP MAPPING TABLE Lever2_Hours_Map;
+DROP MAPPING TABLE Lever2_Sheets_Map;
 DROP MAPPING TABLE Lever2_GapPct_Map;
 DROP MAPPING TABLE Lever2_Streak_Map;
 DROP MAPPING TABLE Lever2_Parent_Map;
 DROP MAPPING TABLE Lever3_Name_Map;
 DROP MAPPING TABLE Lever3_Reasons_Map;
-DROP MAPPING TABLE Lever3_Hours_Map;
+DROP MAPPING TABLE Lever3_Sheets_Map;
 DROP MAPPING TABLE Lever3_GapPct_Map;
 DROP MAPPING TABLE Lever3_Streak_Map;
 DROP MAPPING TABLE Lever3_Parent_Map;

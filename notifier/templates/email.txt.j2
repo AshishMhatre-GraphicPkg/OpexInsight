@@ -5,15 +5,15 @@ Week of {{ digest.period_start }}
 {% for m in digest.machines %}
 {{ m.plant_wc }} — {{ m.department }}
 {{ "-" * 40 }}
-{{ m.plant_wc }} lost {{ "%.1f" | format(m.total_oee_impact) }} hours of OEE Impact this week
-{%- if m.outcome_1 %}, driven primarily by {{ m.outcome_1 }} ({{ "%.1f" | format(m.outcome_1_hours) }} hrs)
-{%- if m.outcome_2 %} and {{ m.outcome_2 }} ({{ "%.1f" | format(m.outcome_2_hours) }} hrs){% endif %}{% endif %}.
+{{ m.plant_wc }} lost {{ "%.0f" | format(m.total_sheet_impact) }} sheets of OEE Impact this week
+{%- if m.outcome_1 %}, driven primarily by {{ m.outcome_1 }} ({{ "%.0f" | format(m.outcome_1_sheets) }} sheets)
+{%- if m.outcome_2 %} and {{ m.outcome_2 }} ({{ "%.0f" | format(m.outcome_2_sheets) }} sheets){% endif %}{% endif %}.
 
 {% if m.levers %}
 Top levers to address:
 {% for l in m.levers %}
   {{ loop.index }}. {{ l.name }}{% if l.reasons %} — {{ l.reasons }}{% endif %}
-     {{ l.parent_outcome }} | {{ "%.1f" | format(l.hours) }} hrs | gap {{ "%.1f" | format(l.gap_pct * 100) }}% | streak {{ l.streak }}/4
+     {{ l.parent_outcome }} | {{ "%.0f" | format(l.sheets) }} sheets | gap {{ "%.1f" | format(l.gap_pct * 100) }}% | streak {{ l.streak }}/4
 {% endfor %}
 {% endif %}
 

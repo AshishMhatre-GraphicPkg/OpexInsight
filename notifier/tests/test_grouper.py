@@ -72,7 +72,7 @@ def test_outcome_2_none_when_absent(df):
 def test_machines_sorted_by_impact_desc(df):
     digests = group_by_manager(df)
     a = next(d for d in digests if d.manager_email == "manager.a@company.com")
-    impacts = [m.total_oee_impact for m in a.machines]
+    impacts = [m.total_sheet_impact for m in a.machines]
     assert impacts == sorted(impacts, reverse=True)
 
 

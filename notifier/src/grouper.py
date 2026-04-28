@@ -15,20 +15,20 @@ _COL_CC = "CC_List"
 _COL_PLANT_WC = "Plant - WC"
 _COL_DEPT = "Department"
 _COL_PERIOD = "Period_Start"
-_COL_TOTAL = "Total_OEE_Impact"
+_COL_TOTAL = "Total_Sheet_Impact"
 _COL_O1_NAME = "Outcome_1_Name"
-_COL_O1_HRS = "Outcome_1_Hours"
+_COL_O1_SHEETS = "Outcome_1_Sheets"
 _COL_O2_NAME = "Outcome_2_Name"
-_COL_O2_HRS = "Outcome_2_Hours"
+_COL_O2_SHEETS = "Outcome_2_Sheets"
 
-_LEVER_FIELDS = ("Name", "Reasons", "Hours", "Gap_Pct", "Streak", "Parent_Outcome")
+_LEVER_FIELDS = ("Name", "Reasons", "Sheets", "Gap_Pct", "Streak", "Parent_Outcome")
 
 
 @dataclass
 class LeverSummary:
     name: str
     reasons: str | None
-    hours: float
+    sheets: float
     gap_pct: float
     streak: int
     parent_outcome: str
@@ -39,11 +39,11 @@ class MachineSummary:
     plant_wc: str
     department: str
     period_start: str
-    total_oee_impact: float
+    total_sheet_impact: float
     outcome_1: str | None
-    outcome_1_hours: float | None
+    outcome_1_sheets: float | None
     outcome_2: str | None
-    outcome_2_hours: float | None
+    outcome_2_sheets: float | None
     levers: list[LeverSummary] = field(default_factory=list)
 
 
@@ -71,7 +71,7 @@ def _build_levers(row: pd.Series) -> list[LeverSummary]:
             LeverSummary(
                 name=str(name),
                 reasons=_nan_to_none(row.get(f"Lever_{i}_Reasons")),
-                hours=float(row.get(f"Lever_{i}_Hours", 0) or 0),
+                sheets=float(row.get(f"Lever_{i}_Sheets", 0) or 0),
                 gap_pct=float(row.get(f"Lever_{i}_Gap_Pct", 0) or 0),
                 streak=int(row.get(f"Lever_{i}_Streak", 0) or 0),
                 parent_outcome=str(row.get(f"Lever_{i}_Parent_Outcome", "") or ""),
@@ -81,7 +81,7 @@ def _build_levers(row: pd.Series) -> list[LeverSummary]:
 
 
 def group_by_manager(df: pd.DataFrame) -> list[ManagerDigest]:
-    """Return one ManagerDigest per unique Manager_Email, ordered by Total_OEE_Impact DESC."""
+    """Return one ManagerDigest per unique Manager_Email, ordered by Total_Sheet_Impact DESC."""
     if _COL_MANAGER not in df.columns:
         raise ValueError(f"CSV missing column '{_COL_MANAGER}'")
 
@@ -103,11 +103,11 @@ def group_by_manager(df: pd.DataFrame) -> list[ManagerDigest]:
                     plant_wc=str(row[_COL_PLANT_WC]),
                     department=str(row.get(_COL_DEPT, "")),
                     period_start=str(row[_COL_PERIOD]),
-                    total_oee_impact=float(row.get(_COL_TOTAL, 0) or 0),
+                    total_sheet_impact=float(row.get(_COL_TOTAL, 0) or 0),
                     outcome_1=_nan_to_none(row.get(_COL_O1_NAME)),
-                    outcome_1_hours=float(row[_COL_O1_HRS]) if _nan_to_none(row.get(_COL_O1_HRS)) is not None else None,
+                    outcome_1_sheets=float(row[_COL_O1_SHEETS]) if _nan_to_none(row.get(_COL_O1_SHEETS)) is not None else None,
                     outcome_2=_nan_to_none(row.get(_COL_O2_NAME)),
-                    outcome_2_hours=float(row[_COL_O2_HRS]) if _nan_to_none(row.get(_COL_O2_HRS)) is not None else None,
+                    outcome_2_sheets=float(row[_COL_O2_SHEETS]) if _nan_to_none(row.get(_COL_O2_SHEETS)) is not None else None,
                     levers=_build_levers(row),
                 )
             )

@@ -34,7 +34,7 @@ def test_html_contains_machine_name(digest_a):
 
 def test_html_contains_total_impact(digest_a):
     html = render_html(digest_a, "Test Subject")
-    assert "12.5" in html
+    assert "12500" in html
 
 
 def test_html_contains_outcome_name(digest_a):

@@ -22,12 +22,12 @@
 <h3>{{ m.plant_wc }} — {{ m.department }}</h3>
 <p class="impact">
   <strong>{{ m.plant_wc }}</strong> lost
-  <strong>{{ "%.1f" | format(m.total_oee_impact) }} hours</strong> of OEE Impact this week
+  <strong>{{ "%.0f" | format(m.total_sheet_impact) }} sheets</strong> of OEE Impact this week
   {%- if m.outcome_1 %},
   driven primarily by <strong>{{ m.outcome_1 }}</strong>
-  ({{ "%.1f" | format(m.outcome_1_hours) }} hrs)
+  ({{ "%.0f" | format(m.outcome_1_sheets) }} sheets)
   {%- if m.outcome_2 %} and <strong>{{ m.outcome_2 }}</strong>
-  ({{ "%.1f" | format(m.outcome_2_hours) }} hrs){% endif %}{% endif %}.
+  ({{ "%.0f" | format(m.outcome_2_sheets) }} sheets){% endif %}{% endif %}.
 </p>
 
 {% if m.levers %}
@@ -37,7 +37,7 @@
   <li>
     <strong>{{ l.name }}{% if l.reasons %} — {{ l.reasons }}{% endif %}</strong>
     ({{ l.parent_outcome }},
-     {{ "%.1f" | format(l.hours) }} hrs lost,
+     {{ "%.0f" | format(l.sheets) }} sheets lost,
      gap {{ "%.1f" | format(l.gap_pct * 100) }}%
      {%- if l.streak > 0 %},
      <span class="streak">{{ l.streak }}/4 weeks above BSP</span>{% endif %})
