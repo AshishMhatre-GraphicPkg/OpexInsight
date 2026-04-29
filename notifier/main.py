@@ -20,7 +20,8 @@ import yaml
 from dotenv import load_dotenv
 
 from src import logging_setup
-from src.fetch import fetch_csv
+from src.fetch import fetch_csv, fetch_findings_csv
+from src.findings import load_findings
 from src.freshness import StaleDataError, assert_fresh
 from src.grouper import group_by_manager
 from src.mailer import send_admin_alert, send_mail
@@ -73,8 +74,18 @@ def main(args: argparse.Namespace) -> int:
         send_admin_alert(config, env, "Insight Notifier — stale MachineWeekSummary.csv", alert_html)
         return 1
 
+    findings_df = None
+    if config.get("sharepoint_findings_path"):
+        try:
+            findings_bytes = fetch_findings_csv(config, env)
+            findings_df = load_findings(findings_bytes)
+        except Exception as exc:
+            log.error("Failed to fetch Findings.csv — digest will send without findings: %s", exc)
+            alert_html = render_admin_alert("Findings fetch failure", traceback.format_exc())
+            send_admin_alert(config, env, "Insight Notifier — Findings.csv fetch failure", alert_html)
+
     df = pd.read_csv(io.BytesIO(csv_bytes))
-    digests = group_by_manager(df)
+    digests = group_by_manager(df, findings_df=findings_df)
 
     if not digests:
         log.warning("No manager digests to send — MachineWeekSummary.csv may be empty")

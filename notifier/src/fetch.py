@@ -48,3 +48,23 @@ def fetch_csv(config: dict, env: dict) -> tuple[bytes, datetime]:
 
     log.info("Fetched %s bytes from SharePoint (mtime %s)", len(content.content), mtime)
     return content.content, mtime
+
+
+def fetch_findings_csv(config: dict, env: dict) -> bytes:
+    """Pull Findings.csv from SharePoint. No freshness check — treated as current."""
+    token = _get_token(
+        env["AZURE_TENANT_ID"], env["AZURE_CLIENT_ID"], env["AZURE_CLIENT_SECRET"]
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    site_id = config["sharepoint_site_id"]
+    file_path = config["sharepoint_findings_path"]
+
+    meta_url = f"{GRAPH_BASE}/sites/{site_id}/drive/root:/{file_path}"
+    meta = requests.get(meta_url, headers=headers, timeout=30)
+    meta.raise_for_status()
+    download_url = meta.json()["@microsoft.graph.downloadUrl"]
+    content = requests.get(download_url, timeout=60)
+    content.raise_for_status()
+
+    log.info("Fetched findings: %s bytes", len(content.content))
+    return content.content

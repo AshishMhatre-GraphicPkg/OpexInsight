@@ -1,0 +1,8 @@
+Plant,G.WCobjectID,G.Section,G.Inspection Point Description,G.Findings,G.Recommendations,G.Priority,G.WorkOrder,GC Allowed Days,Expected Findings Date,GC Work Order Status
+Elk Grove,WC-001,Feeder,Feeder suction cups,Worn suction cups causing misfeed,Replace suction cups,10,4500123,14,3/1/2026,Open
+Elk Grove,WC-001,Platen,Die cut blade alignment,Blade misaligned causing scrap,Realign blade,8,,30,3/15/2026,Missing WO
+Elk Grove,WC-001,Stripping,Stripping pins,2 pins broken,Replace pins,6,4500456,60,4/1/2026,Open
+Elk Grove,WC-002,Feeder,Feeder belt tension,Belt slipping at speed,Retension belt,10,,14,4/10/2026,Missing WO
+Elk Grove,WC-002,Feeder,Feeder cam timing,Cam timing off by 2 degrees,Adjust cam timing,9,4500789,30,3/20/2026,Open
+Chicago,WC-010,Blanking,Blanking tool condition,Blanking tool worn,Replace blanking tool,8,,45,4/5/2026,Missing WO
+Chicago,WC-010,Stripping,Stripping plate,Stripping plate cracked,Replace plate,10,4501000,14,4/20/2026,Open

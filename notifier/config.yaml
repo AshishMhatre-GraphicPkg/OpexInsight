@@ -4,6 +4,7 @@ sharepoint_site_id: "graphicpkg.sharepoint.com,31495aa8-feed-40c7-8d63-e60ff3ba7
 # Path within the site's default document library drive, e.g.:
 # BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/MachineWeekSummary.csv
 sharepoint_file_path: "BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/MachineWeekSummary.csv"
+sharepoint_findings_path: "BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/Findings.csv"
 
 # How old the CSV is allowed to be before aborting and alerting (hours)
 freshness_max_hours: 24

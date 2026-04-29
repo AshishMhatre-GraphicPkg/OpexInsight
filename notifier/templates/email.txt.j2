@@ -17,6 +17,18 @@ Top levers to address:
 {% endfor %}
 {% endif %}
 
+{% if m.findings %}
+Maintenance Findings:
+  Open: {{ m.findings.total_open }}  |  Missing WO: {{ m.findings.total_missing_wo }}  |  Overdue: {{ m.findings.total_overdue }}{% if m.findings.high_priority_count %}  |  Priority-10: {{ m.findings.high_priority_count }}{% endif %}
+
+{% for s in m.findings.by_section %}
+  - {{ s.section }}: {{ s.open_count }} Open{% if s.missing_wo_count %}, {{ s.missing_wo_count }} Missing WO{% endif %}{% if s.overdue_count %}, {{ s.overdue_count }} Overdue{% endif %}{% if s.is_corroborated %} [linked to active lever]{% endif %}
+{% endfor %}
+{% if m.findings.corroborated_sections %}
+  Sections marked [linked to active lever] may be contributing to the OEE gaps above.
+{% endif %}
+{% endif %}
+
 {% endfor %}
 
 ---

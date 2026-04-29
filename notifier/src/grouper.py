@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from .findings import FindingsSummary
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +49,7 @@ class MachineSummary:
     outcome_2: str | None
     outcome_2_sheets: float | None
     levers: list[LeverSummary] = field(default_factory=list)
+    findings: FindingsSummary | None = None
 
 
 @dataclass
@@ -80,8 +85,12 @@ def _build_levers(row: pd.Series) -> list[LeverSummary]:
     return levers
 
 
-def group_by_manager(df: pd.DataFrame) -> list[ManagerDigest]:
-    """Return one ManagerDigest per unique Manager_Email, ordered by Total_Sheet_Impact DESC."""
+def group_by_manager(df: pd.DataFrame, findings_df: pd.DataFrame | None = None) -> list[ManagerDigest]:
+    """Return one ManagerDigest per unique Manager_Email, ordered by Total_Sheet_Impact DESC.
+
+    findings_df: optional pre-parsed Findings.csv DataFrame from findings.load_findings().
+    When supplied, attaches a FindingsSummary to each MachineSummary.
+    """
     if _COL_MANAGER not in df.columns:
         raise ValueError(f"CSV missing column '{_COL_MANAGER}'")
 
@@ -98,6 +107,15 @@ def group_by_manager(df: pd.DataFrame) -> list[ManagerDigest]:
 
         machines = []
         for _, row in group.iterrows():
+            levers = _build_levers(row)
+            machine_findings = None
+            if findings_df is not None:
+                from .findings import build_summary_for_machine
+                plant = str(row.get("Plant", ""))
+                wc_id = str(row.get("WC Object ID", ""))
+                machine_findings = build_summary_for_machine(
+                    findings_df, plant, wc_id, [lv.name for lv in levers]
+                )
             machines.append(
                 MachineSummary(
                     plant_wc=str(row[_COL_PLANT_WC]),
@@ -108,7 +126,8 @@ def group_by_manager(df: pd.DataFrame) -> list[ManagerDigest]:
                     outcome_1_sheets=float(row[_COL_O1_SHEETS]) if _nan_to_none(row.get(_COL_O1_SHEETS)) is not None else None,
                     outcome_2=_nan_to_none(row.get(_COL_O2_NAME)),
                     outcome_2_sheets=float(row[_COL_O2_SHEETS]) if _nan_to_none(row.get(_COL_O2_SHEETS)) is not None else None,
-                    levers=_build_levers(row),
+                    levers=levers,
+                    findings=machine_findings,
                 )
             )
 
