@@ -274,14 +274,14 @@ WHERE Not IsNull("Order Operation Key");
 
 PlantManager_Map:
 MAPPING LOAD
-    Plant,
+    Text(Num(Plant, '0000')),
     Manager_Email
 FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
 (ooxml, embedded labels, table is PlantManagers);
 
 PlantManager_CC_Map:
 MAPPING LOAD
-    Plant,
+    Text(Num(Plant, '0000')),
     CC_List
 FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
 (ooxml, embedded labels, table is PlantManagers);

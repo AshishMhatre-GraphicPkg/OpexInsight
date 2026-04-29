@@ -24,17 +24,24 @@ def _get_token(tenant_id: str, client_id: str, client_secret: str) -> str:
     return result["access_token"]
 
 
+def _file_url(config: dict, file_path: str) -> str:
+    site_id = config["sharepoint_site_id"]
+    drive_id = config.get("sharepoint_drive_id")
+    if drive_id:
+        return f"{GRAPH_BASE}/drives/{drive_id}/root:/{file_path}"
+    return f"{GRAPH_BASE}/sites/{site_id}/drive/root:/{file_path}"
+
+
 def fetch_csv(config: dict, env: dict) -> tuple[bytes, datetime]:
     """Return (csv_bytes, last_modified_utc) for MachineWeekSummary.csv."""
     token = _get_token(
         env["AZURE_TENANT_ID"], env["AZURE_CLIENT_ID"], env["AZURE_CLIENT_SECRET"]
     )
     headers = {"Authorization": f"Bearer {token}"}
-    site_id = config["sharepoint_site_id"]
     file_path = config["sharepoint_file_path"]
 
     # Resolve item metadata (for lastModifiedDateTime)
-    meta_url = f"{GRAPH_BASE}/sites/{site_id}/drive/root:/{file_path}"
+    meta_url = _file_url(config, file_path)
     meta = requests.get(meta_url, headers=headers, timeout=30)
     meta.raise_for_status()
     meta_json = meta.json()
@@ -56,10 +63,9 @@ def fetch_findings_csv(config: dict, env: dict) -> bytes:
         env["AZURE_TENANT_ID"], env["AZURE_CLIENT_ID"], env["AZURE_CLIENT_SECRET"]
     )
     headers = {"Authorization": f"Bearer {token}"}
-    site_id = config["sharepoint_site_id"]
     file_path = config["sharepoint_findings_path"]
 
-    meta_url = f"{GRAPH_BASE}/sites/{site_id}/drive/root:/{file_path}"
+    meta_url = _file_url(config, file_path)
     meta = requests.get(meta_url, headers=headers, timeout=30)
     meta.raise_for_status()
     download_url = meta.json()["@microsoft.graph.downloadUrl"]

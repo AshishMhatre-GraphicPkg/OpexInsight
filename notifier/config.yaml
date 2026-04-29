@@ -1,10 +1,11 @@
 # SharePoint site and file configuration
 # sharepoint_site_id: obtain via Graph API — GET /sites/{hostname}:/{site-path}
 sharepoint_site_id: "graphicpkg.sharepoint.com,31495aa8-feed-40c7-8d63-e60ff3ba7cad,0c9d16ec-e3d0-4f39-ac0f-476f8d867d03"
-# Path within the site's default document library drive, e.g.:
-# BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/MachineWeekSummary.csv
-sharepoint_file_path: "BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/MachineWeekSummary.csv"
-sharepoint_findings_path: "BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/Findings.csv"
+# Document library name (the top-level library, e.g. BSS_AMC_MFG)
+sharepoint_drive_id: "b!qFpJMe3-x0CNY-YP87p8rewWnQzQ4zlPrA9Hb42GfQOmwrb-nsDQQbAltButocyJ"
+# Path within the library (do NOT include the library name itself)
+sharepoint_file_path: "Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/MachineWeekSummary.csv"
+sharepoint_findings_path: "Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/Findings.csv"
 
 # How old the CSV is allowed to be before aborting and alerting (hours)
 freshness_max_hours: 24
