@@ -12,6 +12,24 @@ There is no build system, no test runner, and no linter. Changes are made direct
 
 ---
 
+## Repo Structure
+
+Two components share this repo:
+
+| Component | Path | Language | What it does |
+|---|---|---|---|
+| **Qlik load script** | `InsightOpexv1.qvs` | Qlik script | Computes BSP benchmarks, scores gaps, stores `InsightRecords.qvd` and `MachineWeekSummary.csv` to SharePoint |
+| **Email notifier** | `notifier/` | Python 3.11+ | Reads `MachineWeekSummary.csv` and `Findings.csv` from SharePoint, renders per-manager digest emails, sends via Microsoft Graph API |
+
+The interface between them is two CSV files on SharePoint (`OPEXinsights/`):
+
+- **`MachineWeekSummary.csv`** — written by Qlik Section 49 after each Monday reload. One row per machine per week, with top-2 Outcomes and top-3 Levers pre-pivoted. Join key: `Plant` (plant number) + `WC Object ID`.
+- **`Findings.csv`** — written by an external maintenance system (daily). One row per open/missing-WO finding. Join key: `Plant` + `G.WCobjectID`.
+
+See `notifier/CLAUDE.md` for the full notifier architecture.
+
+---
+
 ## Script Architecture — 6 Tabs / Steps
 
 The script is a single `.qvs` file divided into 6 logical tabs (marked with `///$tab Step N`). Execution is linear top to bottom.
@@ -98,6 +116,18 @@ Per-reason `Streak_4wk` (range 0–4) is the count of weeks in the last 4 full w
 - **Section 46:** Reason insights ranked `ORDER BY Plant, WC, KPI_Name, OEE_Impact DESC`. **Top-3 cap** applied to `KPI_Name IN ('Downtime Reason', 'Scrap Reason')` only — Feeder/Blanket one-per-machine rows pass through uncapped.
 - **Section 47:** Concatenate MainInsightRecords + ReasonInsightRecords into `InsightRecords`. Drop `TimeReason_Name_Map` / `ScrapReason_Name_Map` here.
 - **Section 48:** Incremental store — unchanged mechanics. The QVD's historical rows pre-dating this refactor will have legacy fields (`tPltRsnKey`, `Composite_Score`, `Impact_Score`, `Streak_13wk`) as NULL on new writes and new fields (`Reasons`, `OEE_Impact`, `Streak_4wk` for reasons) as NULL on old rows — Qlik concat tolerates this. A one-time full reload cleans up the QVD if desired.
+- **Section 49:** `MachineWeekSummary` mart — one row per machine per week, with top-2 Outcomes and top-3 Levers pre-pivoted from `InsightRecords`. Joined to `PlantManagers.xlsx` (Plant → Manager_Email, CC_List). Stored as both `.qvd` and `.csv` (comma-delimited) to `OPEXinsights/MachineWeekSummary.csv` on SharePoint. The `.csv` is the feed for the Python notifier in `notifier/`.
+
+**`MachineWeekSummary.csv` schema** (Section 49 STORE output, in column order):
+```
+Plant, WC Object ID, Plant - WC, Department, Period_Start,
+Manager_Email, CC_List, Total_Sheet_Impact,
+Outcome_1_Name, Outcome_1_Sheets, Outcome_2_Name, Outcome_2_Sheets,
+Lever_1_Name, Lever_1_Reasons, Lever_1_Sheets, Lever_1_Gap_Pct, Lever_1_Streak, Lever_1_Parent_Outcome,
+Lever_2_Name, Lever_2_Reasons, Lever_2_Sheets, Lever_2_Gap_Pct, Lever_2_Streak, Lever_2_Parent_Outcome,
+Lever_3_Name, Lever_3_Reasons, Lever_3_Sheets, Lever_3_Gap_Pct, Lever_3_Streak, Lever_3_Parent_Outcome
+```
+`Plant` is a plant number (joins to `G.WCobjectID` / `Plant` in `Findings.csv`). `Total_Sheet_Impact` is the sum of `OEE_Impact` converted to sheets. Lever columns are contiguous — an absent lever has all its fields as NULL.
 
 **Final `InsightRecords` schema** (both main + reason rows):
 ```
