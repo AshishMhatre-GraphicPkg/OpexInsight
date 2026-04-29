@@ -160,11 +160,23 @@ def main(args: argparse.Namespace) -> int:
         if "Plant" in df.columns:
             log.info("Plants in CSV: %s", df["Plant"].unique().tolist())
 
+    if findings_df is not None:
+        f_plants = sorted(str(v) for v in findings_df["plant"].dropna().unique())
+        f_wcids = sorted(str(v) for v in findings_df["wc_object_id"].dropna().unique())
+        log.info("Findings plants (unique): %s", f_plants[:20])
+        log.info("Findings WC IDs (sample): %s", f_wcids[:20])
+    if "WC Object ID" in df.columns:
+        log.info("Summary WC Object IDs: %s", df["WC Object ID"].astype(str).unique().tolist())
+
     digests = group_by_manager(df, findings_df=findings_df)
 
     if not digests:
         log.warning("No manager digests — MachineWeekSummary.csv may be empty")
         return 0
+
+    attached = sum(1 for d in digests for m in d.machines if m.findings is not None)
+    total_machines_count = sum(len(d.machines) for d in digests)
+    log.info("Findings attached: %d / %d machines", attached, total_machines_count)
 
     period_start = digests[0].period_start
     subject = f"{config.get('email_subject_prefix', 'Weekly OEE Insight')} — {period_start}"

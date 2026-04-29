@@ -54,12 +54,21 @@ class FindingsSummary:
     by_section: list[SectionStat] = field(default_factory=list)
 
 
+def _normalise_plant(val) -> str:
+    """Canonicalise plant so '0008', 8, 8.0, and '8' all compare equal as '8'."""
+    s = str(val).strip()
+    try:
+        return str(int(float(s)))   # '8.0' → 8 → '8', '0008' → 8 → '8'
+    except (ValueError, OverflowError):
+        return s                    # non-numeric plant codes pass through unchanged
+
+
 def load_findings(csv_bytes: bytes) -> pd.DataFrame:
     """Parse Findings.csv bytes and return a normalised DataFrame."""
     df = pd.read_csv(pd.io.common.BytesIO(csv_bytes))
     df = df.rename(columns={k: v for k, v in _RENAMES.items() if k in df.columns})
     if "plant" in df.columns:
-        df["plant"] = df["plant"].astype(str)
+        df["plant"] = df["plant"].apply(_normalise_plant)
     if "wc_object_id" in df.columns:
         df["wc_object_id"] = df["wc_object_id"].astype(str)
     if "priority" in df.columns:
@@ -112,7 +121,7 @@ def build_summary_for_machine(
     if as_of is None:
         as_of = date.today()
 
-    mask = (df_all["plant"] == str(plant)) & (df_all["wc_object_id"] == str(wc_object_id))
+    mask = (df_all["plant"] == _normalise_plant(plant)) & (df_all["wc_object_id"] == str(wc_object_id).strip())
     df = df_all[mask].copy()
     if df.empty:
         return None
