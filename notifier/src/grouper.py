@@ -25,7 +25,36 @@ _COL_O1_SHEETS = "Outcome_1_Sheets"
 _COL_O2_NAME = "Outcome_2_Name"
 _COL_O2_SHEETS = "Outcome_2_Sheets"
 
-_LEVER_FIELDS = ("Name", "Reasons", "Sheets", "Gap_Pct", "Streak", "Parent_Outcome")
+_LEVER_FIELDS = ("Name", "Reasons", "Sheets", "Gap_Pct", "Streak", "Parent_Outcome", "Cur_Actual", "BSP_Benchmark")
+
+_PERCENT_LEVERS = {
+    "OEE", "Availability", "Performance", "Quality",
+    "Downtime %", "Scrap Rate", "Setup Time %",
+    "Downtime Reason", "Scrap Reason", "Feeder DT%", "Blanket DT%",
+}
+
+_LOWER_IS_BETTER_LEVERS = {
+    "Downtime %", "Scrap Rate", "Setup Hrs/Event", "Setup Time %",
+    "Downtime Reason", "Scrap Reason",
+    "Feeder DT%", "Feeder Count Rate", "Feeder Per10K",
+    "Blanket DT%", "Blanket Count Rate", "Blanket Per10K",
+}
+
+
+def _format_kpi_value(name: str, val) -> str:
+    if val is None or (hasattr(val, "__float__") and pd.isna(val)):
+        return ""
+    try:
+        v = float(val)
+    except (TypeError, ValueError):
+        return str(val)
+    if name in _PERCENT_LEVERS:
+        return f"{v * 100:.2f}%"
+    return f"{v:,.2f}"
+
+
+def _streak_direction(name: str) -> str:
+    return "above BSP" if name in _LOWER_IS_BETTER_LEVERS else "below BSP"
 
 
 @dataclass
@@ -36,6 +65,9 @@ class LeverSummary:
     gap_pct: float
     streak: int
     parent_outcome: str
+    cur_actual: str
+    bsp_benchmark: str
+    streak_direction: str
 
 
 @dataclass
@@ -72,14 +104,18 @@ def _build_levers(row: pd.Series) -> list[LeverSummary]:
         name = _nan_to_none(row.get(f"Lever_{i}_Name"))
         if name is None:
             break
+        lever_name = str(name)
         levers.append(
             LeverSummary(
-                name=str(name),
+                name=lever_name,
                 reasons=_nan_to_none(row.get(f"Lever_{i}_Reasons")),
                 sheets=float(row.get(f"Lever_{i}_Sheets", 0) or 0),
                 gap_pct=float(row.get(f"Lever_{i}_Gap_Pct", 0) or 0),
                 streak=int(row.get(f"Lever_{i}_Streak", 0) or 0),
                 parent_outcome=str(row.get(f"Lever_{i}_Parent_Outcome", "") or ""),
+                cur_actual=_format_kpi_value(lever_name, row.get(f"Lever_{i}_Cur_Actual")),
+                bsp_benchmark=_format_kpi_value(lever_name, row.get(f"Lever_{i}_BSP_Benchmark")),
+                streak_direction=_streak_direction(lever_name),
             )
         )
     return levers

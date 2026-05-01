@@ -13,7 +13,7 @@ Week of {{ digest.period_start }}
 Top levers to address:
 {% for l in m.levers %}
   {{ loop.index }}. {{ l.name }}{% if l.reasons %} — {{ l.reasons }}{% endif %}
-     {{ l.parent_outcome }} | {{ "%.0f" | format(l.sheets) }} sheets | gap {{ "%.1f" | format(l.gap_pct * 100) }}% | streak {{ l.streak }}/4
+     {{ l.parent_outcome }} | {{ "%.0f" | format(l.sheets) }} sheets{%- if l.cur_actual %} | actual {{ l.cur_actual }} vs BSP {{ l.bsp_benchmark }}{% endif %} | gap {{ "%.1f" | format(l.gap_pct * 100) }}% | streak {{ l.streak }}/4 {{ l.streak_direction }}
 {% endfor %}
 {% endif %}
 

@@ -80,3 +80,41 @@ def test_missing_manager_email_column_raises():
     bad_df = pd.DataFrame({"Plant": ["X"]})
     with pytest.raises(ValueError, match="Manager_Email"):
         group_by_manager(bad_df)
+
+
+def test_lower_is_better_lever_formats_as_pct_and_above_bsp(df):
+    digests = group_by_manager(df)
+    a = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    wc01 = next(m for m in a.machines if "Gluer 01" in m.plant_wc)
+    lvr = wc01.levers[0]  # Downtime Reason — lower-is-better, percent
+    assert lvr.cur_actual == "32.00%"
+    assert lvr.bsp_benchmark == "14.00%"
+    assert lvr.streak_direction == "above BSP"
+
+
+def test_higher_is_better_lever_formats_as_pct_and_below_bsp(df):
+    digests = group_by_manager(df)
+    a = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    wc01 = next(m for m in a.machines if "Gluer 01" in m.plant_wc)
+    lvr = wc01.levers[2]  # Performance — higher-is-better, percent
+    assert lvr.cur_actual == "72.00%"
+    assert lvr.bsp_benchmark == "77.00%"
+    assert lvr.streak_direction == "below BSP"
+
+
+def test_raw_numeric_lever_no_percent(df):
+    digests = group_by_manager(df)
+    b = next(d for d in digests if d.manager_email == "manager.b@company.com")
+    wc10 = b.machines[0]  # Chicago / Flexo 01 — Speed lever is raw numeric
+    speed_lever = next(l for l in wc10.levers if l.name.strip() == "Speed")
+    assert "%" not in speed_lever.cur_actual
+    assert "%" not in speed_lever.bsp_benchmark
+    assert speed_lever.streak_direction == "below BSP"
+
+
+def test_missing_cur_actual_returns_empty_string(df):
+    # Gluer 02 has no Lever_3 — should not error and Lever_3 is absent
+    digests = group_by_manager(df)
+    a = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    wc02 = next(m for m in a.machines if "Gluer 02" in m.plant_wc)
+    assert len(wc02.levers) == 2  # Lever_3 absent, so only 2

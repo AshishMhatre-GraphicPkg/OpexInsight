@@ -3914,7 +3914,9 @@ LOAD
     Sheet_Impact                                                    as Lever_Sheets,
     Gap_Pct                                                         as Lever_Gap_Pct,
     Streak_4wk                                                      as Lever_Streak,
-    Replace(KPI_Category, 'Lever - ', '')                           as Lever_Parent_Outcome
+    Replace(KPI_Category, 'Lever - ', '')                           as Lever_Parent_Outcome,
+    Cur_Actual                                                      as Lever_Cur_Actual,
+    BSP_Benchmark                                                   as Lever_BSP_Benchmark
 RESIDENT InsightRecords
 WHERE Period_Start = $(v2WeekStart)
   AND WildMatch(KPI_Category, 'Lever - *')
@@ -3948,6 +3950,8 @@ LOAD
     Lever_Gap_Pct,
     Lever_Streak,
     Lever_Parent_Outcome,
+    Lever_Cur_Actual,
+    Lever_BSP_Benchmark,
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID'),
        Peek('Lever_Rank') + 1, 1)                                   as Lever_Rank
 RESIDENT Temp_PoolLevers
@@ -3970,6 +3974,8 @@ LOAD
     Gap_Pct                                                         as Lever_Gap_Pct,
     Streak_4wk                                                      as Lever_Streak,
     Replace(KPI_Category, 'Lever - ', '')                           as Lever_Parent_Outcome,
+    Cur_Actual                                                      as Lever_Cur_Actual,
+    BSP_Benchmark                                                   as Lever_BSP_Benchmark,
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID'),
        Peek('Lever_Rank') + 1, 1)                                   as Lever_Rank
 RESIDENT InsightRecords
@@ -4068,6 +4074,30 @@ Lever3_Parent_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Parent_Outcome
 RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
 
+Lever1_CurActual_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Cur_Actual
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+
+Lever1_BSP_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_BSP_Benchmark
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+
+Lever2_CurActual_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Cur_Actual
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
+
+Lever2_BSP_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_BSP_Benchmark
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
+
+Lever3_CurActual_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Cur_Actual
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
+
+Lever3_BSP_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_BSP_Benchmark
+RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
+
 DROP TABLE Temp_QualifiedLevers;
 
 
@@ -4106,18 +4136,24 @@ LOAD
     ApplyMap('Lever1_GapPct_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_1_Gap_Pct,
     ApplyMap('Lever1_Streak_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_1_Streak,
     ApplyMap('Lever1_Parent_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_1_Parent_Outcome,
+    ApplyMap('Lever1_CurActual_Map', Plant & '|' & [WC Object ID],  Null())     as Lever_1_Cur_Actual,
+    ApplyMap('Lever1_BSP_Map',       Plant & '|' & [WC Object ID],  Null())     as Lever_1_BSP_Benchmark,
     ApplyMap('Lever2_Name_Map',      Plant & '|' & [WC Object ID],  Null())     as Lever_2_Name,
     ApplyMap('Lever2_Reasons_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_2_Reasons,
     ApplyMap('Lever2_Sheets_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_2_Sheets,
     ApplyMap('Lever2_GapPct_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_2_Gap_Pct,
     ApplyMap('Lever2_Streak_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_2_Streak,
     ApplyMap('Lever2_Parent_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_2_Parent_Outcome,
+    ApplyMap('Lever2_CurActual_Map', Plant & '|' & [WC Object ID],  Null())     as Lever_2_Cur_Actual,
+    ApplyMap('Lever2_BSP_Map',       Plant & '|' & [WC Object ID],  Null())     as Lever_2_BSP_Benchmark,
     ApplyMap('Lever3_Name_Map',      Plant & '|' & [WC Object ID],  Null())     as Lever_3_Name,
     ApplyMap('Lever3_Reasons_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_3_Reasons,
     ApplyMap('Lever3_Sheets_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Sheets,
     ApplyMap('Lever3_GapPct_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Gap_Pct,
     ApplyMap('Lever3_Streak_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Streak,
-    ApplyMap('Lever3_Parent_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Parent_Outcome
+    ApplyMap('Lever3_Parent_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Parent_Outcome,
+    ApplyMap('Lever3_CurActual_Map', Plant & '|' & [WC Object ID],  Null())     as Lever_3_Cur_Actual,
+    ApplyMap('Lever3_BSP_Map',       Plant & '|' & [WC Object ID],  Null())     as Lever_3_BSP_Benchmark
 RESIDENT MachineWeekSummary_Base;
 
 DROP TABLE MachineWeekSummary_Base;
@@ -4144,6 +4180,12 @@ DROP MAPPING TABLE Lever3_Sheets_Map;
 DROP MAPPING TABLE Lever3_GapPct_Map;
 DROP MAPPING TABLE Lever3_Streak_Map;
 DROP MAPPING TABLE Lever3_Parent_Map;
+DROP MAPPING TABLE Lever1_CurActual_Map;
+DROP MAPPING TABLE Lever1_BSP_Map;
+DROP MAPPING TABLE Lever2_CurActual_Map;
+DROP MAPPING TABLE Lever2_BSP_Map;
+DROP MAPPING TABLE Lever3_CurActual_Map;
+DROP MAPPING TABLE Lever3_BSP_Map;
 
 
 // ---- Step K: store ----
