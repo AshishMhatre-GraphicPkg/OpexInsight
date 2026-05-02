@@ -46,7 +46,7 @@
     ({{ l.parent_outcome }},
      {{ "%.0f" | format(l.sheets) }} sheets lost,
      {%- if l.cur_actual %} actual {{ l.cur_actual }} vs BSP {{ l.bsp_benchmark }},{% endif %}
-     gap {{ "%.1f" | format(l.gap_pct * 100) }}%
+     gap {{ "%.1f" | format(l.gap_pct) }}%
      {%- if l.streak > 0 %},
      <span class="streak">{{ l.streak }}/4 weeks {{ l.streak_direction }}</span>{% endif %})
   </li>
