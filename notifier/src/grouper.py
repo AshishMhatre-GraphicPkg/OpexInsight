@@ -23,19 +23,17 @@ _COL_PERIOD = "Period_Start"
 _COL_TOTAL = "Total_Sheet_Impact"
 _COL_O1_NAME = "Outcome_1_Name"
 _COL_O1_SHEETS = "Outcome_1_Sheets"
-_COL_O2_NAME = "Outcome_2_Name"
-_COL_O2_SHEETS = "Outcome_2_Sheets"
 
 _LEVER_FIELDS = ("Name", "Reasons", "Sheets", "Gap_Pct", "Streak", "Parent_Outcome", "Cur_Actual", "BSP_Benchmark")
 
 _PERCENT_LEVERS = {
-    "OEE", "Availability", "Performance", "Quality",
-    "Downtime %", "Scrap Rate", "Setup Time %",
+    "OEE",
+    "Downtime %", "Scrap Rate",
     "Downtime Reason", "Scrap Reason", "Feeder DT%", "Blanket DT%",
 }
 
 _LOWER_IS_BETTER_LEVERS = {
-    "Downtime %", "Scrap Rate", "Setup Hrs/Event", "Setup Time %",
+    "Downtime %", "Scrap Rate", "Setup Hrs/Event", "Setup Frequency",
     "Downtime Reason", "Scrap Reason",
     "Feeder DT%", "Feeder Count Rate", "Feeder Per10K",
     "Blanket DT%", "Blanket Count Rate", "Blanket Per10K",
@@ -79,8 +77,6 @@ class MachineSummary:
     total_sheet_impact: float
     outcome_1: str | None
     outcome_1_sheets: float | None
-    outcome_2: str | None
-    outcome_2_sheets: float | None
     levers: list[LeverSummary] = field(default_factory=list)
     findings: FindingsSummary | None = None
     pm_summary: PMSummary | None = None
@@ -173,8 +169,6 @@ def group_by_manager(
                     total_sheet_impact=float(row.get(_COL_TOTAL, 0) or 0),
                     outcome_1=_nan_to_none(row.get(_COL_O1_NAME)),
                     outcome_1_sheets=float(row[_COL_O1_SHEETS]) if _nan_to_none(row.get(_COL_O1_SHEETS)) is not None else None,
-                    outcome_2=_nan_to_none(row.get(_COL_O2_NAME)),
-                    outcome_2_sheets=float(row[_COL_O2_SHEETS]) if _nan_to_none(row.get(_COL_O2_SHEETS)) is not None else None,
                     levers=levers,
                     findings=machine_findings,
                     pm_summary=machine_pm,

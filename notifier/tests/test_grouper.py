@@ -62,13 +62,6 @@ def test_machine_with_one_lever_stops_at_none(df):
     assert len(wc02.levers) == 2
 
 
-def test_outcome_2_none_when_absent(df):
-    digests = group_by_manager(df)
-    a = next(d for d in digests if d.manager_email == "manager.a@company.com")
-    wc02 = next(m for m in a.machines if "Gluer 02" in m.plant_wc)
-    assert wc02.outcome_2 is None
-
-
 def test_machines_sorted_by_impact_desc(df):
     digests = group_by_manager(df)
     a = next(d for d in digests if d.manager_email == "manager.a@company.com")
@@ -92,14 +85,14 @@ def test_lower_is_better_lever_formats_as_pct_and_above_bsp(df):
     assert lvr.streak_direction == "above BSP"
 
 
-def test_higher_is_better_lever_formats_as_pct_and_below_bsp(df):
+def test_lower_is_better_raw_numeric_lever(df):
     digests = group_by_manager(df)
     a = next(d for d in digests if d.manager_email == "manager.a@company.com")
     wc01 = next(m for m in a.machines if "Gluer 01" in m.plant_wc)
-    lvr = wc01.levers[2]  # Performance — higher-is-better, percent
-    assert lvr.cur_actual == "72.00%"
-    assert lvr.bsp_benchmark == "77.00%"
-    assert lvr.streak_direction == "below BSP"
+    lvr = wc01.levers[2]  # Setup Frequency — lower-is-better, raw numeric
+    assert "%" not in lvr.cur_actual
+    assert "%" not in lvr.bsp_benchmark
+    assert lvr.streak_direction == "above BSP"
 
 
 def test_raw_numeric_lever_no_percent(df):

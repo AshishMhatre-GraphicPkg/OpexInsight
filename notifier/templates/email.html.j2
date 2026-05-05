@@ -38,8 +38,7 @@
   {%- if m.outcome_1 %},
   driven primarily by <strong>{{ m.outcome_1 }}</strong>
   ({{ "%.0f" | format(m.outcome_1_sheets) }} sheets)
-  {%- if m.outcome_2 %} and <strong>{{ m.outcome_2 }}</strong>
-  ({{ "%.0f" | format(m.outcome_2_sheets) }} sheets){% endif %}{% endif %}.
+  {%- endif %}.
 </p>
 
 {% if m.levers %}
@@ -59,7 +58,7 @@
 </ul>
 <p>
   Improving their gap and breaking their streak will move
-  <strong>{{ m.outcome_1 }}{% if m.outcome_2 %} and {{ m.outcome_2 }}{% endif %}</strong>.
+  <strong>{{ m.outcome_1 }}</strong>.
 </p>
 {% endif %}
 

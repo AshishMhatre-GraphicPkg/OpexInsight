@@ -7,7 +7,7 @@ Week of {{ digest.period_start }}
 {{ "-" * 40 }}
 {{ m.plant_wc }} lost {{ "%.0f" | format(m.total_sheet_impact) }} sheets of OEE Impact this week
 {%- if m.outcome_1 %}, driven primarily by {{ m.outcome_1 }} ({{ "%.0f" | format(m.outcome_1_sheets) }} sheets)
-{%- if m.outcome_2 %} and {{ m.outcome_2 }} ({{ "%.0f" | format(m.outcome_2_sheets) }} sheets){% endif %}{% endif %}.
+{%- endif %}.
 
 {% if m.levers %}
 Top levers to address:

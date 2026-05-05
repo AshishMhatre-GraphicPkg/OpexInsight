@@ -94,8 +94,8 @@ One row per machine. Join key for findings is `Plant` + `WC Object ID`. Join key
 | `Plant`, `WC Object ID` | Join keys for findings lookup |
 | `Manager_Email`, `CC_List` | Routing; CC_List is semicolon-separated |
 | `Plant - WC`, `Department`, `Period_Start` | Identity / display |
-| `Total_Sheet_Impact` | Primary sort key (DESC) |
-| `Outcome_1_Name`, `Outcome_1_Sheets`, `Outcome_2_Name`, `Outcome_2_Sheets` | Top-2 Outcome KPIs |
+| `Total_Sheet_Impact` | OEE row's `Sheet_Impact` only — primary sort key (DESC). Levers ladder into OEE so summing all rows would double-count. |
+| `Outcome_1_Name`, `Outcome_1_Sheets` | Single Outcome KPI (always OEE) — `Outcome_2_*` columns removed |
 | `Lever_{1,2,3}_{Name,Reasons,Sheets,Gap_Pct,Streak,Parent_Outcome}` | Top-3 Lever KPIs |
 
 `_build_levers()` stops at the first `Lever_N_Name` that is NaN — levers must be contiguous.
@@ -184,7 +184,7 @@ SECTION_TO_LEVER_KEYWORDS = {
 
 - **`fetch.py` and `mailer.py` each acquire their own MSAL token** — no shared token object; each module is self-contained.
 - **`findings.py` and `pm_compliance.py` are pure** — no I/O. Both follow the same contract: `load_X(bytes)` → DataFrame; `build_X_for_machine(df, …)` → dataclass or `None`. Tests call both directly with no network.
-- **`grouper.py` is pure** — `findings_df=None` and `pm_df=None` make both optional; existing callers are unchanged.
+- **`grouper.py` is pure** — `findings_df=None` and `pm_df=None` make both optional; existing callers are unchanged. `MachineSummary` has a single `outcome_1` / `outcome_1_sheets` (always OEE); `outcome_2_*` fields were removed when the KPI set was rationalized to one Outcome.
 - **Findings and PM failures are non-fatal** — each catches exceptions, sends an admin alert, and continues the digest without that block. Pattern reuses `send_admin_alert` at `mailer.py:85`.
 - **PM join uses `WC Object ID` only** — Plant is excluded because PMComplianceDump stores it as a short int (`8`) while MachineWeekSummary uses zero-padded strings (`0008`). `WC Object ID` is unique across plants.
 - **PM block placement** — amber table rendered immediately below the Findings block within each per-machine card; suppressed entirely when `pm_summary is None`.

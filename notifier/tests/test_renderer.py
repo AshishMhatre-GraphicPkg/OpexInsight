@@ -59,10 +59,11 @@ def test_html_no_streak_when_zero(digest_b):
     assert "2/4" in html
 
 
-def test_html_outcome_2_absent_when_none(digest_b):
-    # manager B machine has no Outcome_2
+def test_html_single_outcome_narrative(digest_b):
+    # Only OEE outcome — no "and <strong>" secondary outcome rendered
     html = render_html(digest_b, "Test Subject")
-    assert "and <strong>None" not in html
+    assert "driven primarily by <strong>OEE</strong>" in html
+    assert "and <strong>" not in html
 
 
 def test_text_contains_machine_name(digest_a):
