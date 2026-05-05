@@ -20,8 +20,9 @@ import yaml
 from dotenv import load_dotenv
 
 from src import logging_setup
-from src.fetch import fetch_csv, fetch_findings_csv
+from src.fetch import fetch_csv, fetch_findings_csv, fetch_pm_xlsx
 from src.findings import load_findings
+from src.pm_compliance import load_pm_compliance
 from src.freshness import StaleDataError, assert_fresh
 from src.grouper import group_by_manager
 from src.mailer import send_admin_alert, send_mail
@@ -84,8 +85,18 @@ def main(args: argparse.Namespace) -> int:
             alert_html = render_admin_alert("Findings fetch failure", traceback.format_exc())
             send_admin_alert(config, env, "Insight Notifier — Findings.csv fetch failure", alert_html)
 
+    pm_df = None
+    if config.get("sharepoint_pm_path"):
+        try:
+            pm_bytes = fetch_pm_xlsx(config, env)
+            pm_df = load_pm_compliance(pm_bytes)
+        except Exception as exc:
+            log.error("Failed to fetch PMComplianceDump.xlsx — digest will send without PM block: %s", exc)
+            alert_html = render_admin_alert("PM Compliance fetch failure", traceback.format_exc())
+            send_admin_alert(config, env, "Insight Notifier — PMComplianceDump.xlsx fetch failure", alert_html)
+
     df = pd.read_csv(io.BytesIO(csv_bytes))
-    digests = group_by_manager(df, findings_df=findings_df)
+    digests = group_by_manager(df, findings_df=findings_df, pm_df=pm_df)
 
     if not digests:
         log.warning("No manager digests to send — MachineWeekSummary.csv may be empty")

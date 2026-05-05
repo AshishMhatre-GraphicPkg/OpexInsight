@@ -17,6 +17,11 @@
   .findings-sections li { margin-bottom: 3px; font-size: 0.93em; }
   .findings-sections li.corroborated { font-weight: bold; color: #7b0000; }
   .findings-note { font-size: 0.85em; color: #666; margin-top: 6px; }
+  .pm-table { margin-top: 14px; border-collapse: collapse; width: 100%; max-width: 480px; font-size: 0.93em; }
+  .pm-table th { background: #fff3cd; color: #664d00; text-align: left; padding: 5px 8px; }
+  .pm-table td { padding: 4px 8px; border-bottom: 1px solid #eee; }
+  .pm-count { text-align: right; }
+  .pm-total-row td { border-top: 2px solid #ccc; }
   .footer { margin-top: 32px; font-size: 12px; color: #888; border-top: 1px solid #ddd; padding-top: 8px; }
 </style>
 </head>
@@ -86,6 +91,27 @@
   </p>
   {% endif %}
 </div>
+{% endif %}
+
+{% if m.pm_summary %}
+<table class="pm-table">
+  <thead>
+    <tr><th colspan="2">Overdue Preventive Maintenance (3+ Weeks Past Due)</th></tr>
+    <tr><th>Core PM</th><th class="pm-count">Overdue Count</th></tr>
+  </thead>
+  <tbody>
+    {% for row in m.pm_summary.by_core_pm %}
+    <tr>
+      <td>{{ row.core_pm }}</td>
+      <td class="pm-count">{{ row.overdue_count }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="pm-total-row">
+      <td><strong>Total</strong></td>
+      <td class="pm-count"><strong>{{ m.pm_summary.total_overdue }}</strong></td>
+    </tr>
+  </tbody>
+</table>
 {% endif %}
 
 {% endfor %}

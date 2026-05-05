@@ -10,6 +10,7 @@ import pandas as pd
 
 if TYPE_CHECKING:
     from .findings import FindingsSummary
+    from .pm_compliance import PMSummary
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ class MachineSummary:
     outcome_2_sheets: float | None
     levers: list[LeverSummary] = field(default_factory=list)
     findings: FindingsSummary | None = None
+    pm_summary: PMSummary | None = None
 
 
 @dataclass
@@ -121,7 +123,11 @@ def _build_levers(row: pd.Series) -> list[LeverSummary]:
     return levers
 
 
-def group_by_manager(df: pd.DataFrame, findings_df: pd.DataFrame | None = None) -> list[ManagerDigest]:
+def group_by_manager(
+    df: pd.DataFrame,
+    findings_df: pd.DataFrame | None = None,
+    pm_df: pd.DataFrame | None = None,
+) -> list[ManagerDigest]:
     """Return one ManagerDigest per unique Manager_Email, ordered by Total_Sheet_Impact DESC.
 
     findings_df: optional pre-parsed Findings.csv DataFrame from findings.load_findings().
@@ -152,6 +158,13 @@ def group_by_manager(df: pd.DataFrame, findings_df: pd.DataFrame | None = None) 
                 machine_findings = build_summary_for_machine(
                     findings_df, plant, wc_id, [lv.name for lv in levers]
                 )
+
+            machine_pm = None
+            if pm_df is not None:
+                from .pm_compliance import build_pm_summary_for_machine
+                wc_id = str(row.get("WC Object ID", ""))
+                machine_pm = build_pm_summary_for_machine(pm_df, wc_id)
+
             machines.append(
                 MachineSummary(
                     plant_wc=str(row[_COL_PLANT_WC]),
@@ -164,6 +177,7 @@ def group_by_manager(df: pd.DataFrame, findings_df: pd.DataFrame | None = None) 
                     outcome_2_sheets=float(row[_COL_O2_SHEETS]) if _nan_to_none(row.get(_COL_O2_SHEETS)) is not None else None,
                     levers=levers,
                     findings=machine_findings,
+                    pm_summary=machine_pm,
                 )
             )
 

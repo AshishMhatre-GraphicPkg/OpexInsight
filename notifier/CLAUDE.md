@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A Python email notifier that sends Monday-morning OEE Insight digests to plant managers. It reads `MachineWeekSummary.csv` from SharePoint (written by Qlik Section 49), checks freshness, groups rows by manager, renders Jinja2 templates, and sends via Microsoft Graph API.
+A Python email notifier that sends Monday-morning OEE Insight digests to plant managers. It reads `MachineWeekSummary.csv` from SharePoint (written by Qlik Section 49), checks freshness, fetches Maintenance Findings and PM Compliance data, groups rows by manager, renders Jinja2 templates, and sends via Microsoft Graph API.
 
 ---
 
@@ -22,6 +22,9 @@ python main.py --dry-run
 # Live send
 python main.py
 
+# Preview with real SharePoint data — no mail sent, HTML saved to out/test_preview/
+python test_without_mail.py --ignore-freshness
+
 # Run tests
 pytest tests/
 
@@ -34,28 +37,33 @@ pytest tests/test_grouper.py
 ## Architecture
 
 ```
-main.py              # Orchestrator: fetch → freshness check → findings fetch → group → render → send
+main.py                  # Orchestrator: fetch → freshness → findings → PM → group → render → send
+test_without_mail.py     # Fetch real SharePoint data, render previews to out/test_preview/ — no mail sent
 src/
-  fetch.py           # Graph API: acquire MSAL token; fetch_csv (with mtime), fetch_findings_csv (no mtime)
-  freshness.py       # StaleDataError raised if CSV mtime > freshness_max_hours
-  grouper.py         # group_by_manager(df, findings_df=None) → list[ManagerDigest]
-  findings.py        # Pure: load_findings(), build_summary_for_machine() → FindingsSummary | None
-  renderer.py        # Jinja2 wrappers: render_html / render_text / render_admin_alert
-  mailer.py          # Graph API: _post_with_retry (3 attempts, exp backoff), send_mail, send_admin_alert
-  logging_setup.py   # configure() called once at startup
+  fetch.py               # Graph API: fetch_csv (with mtime), fetch_findings_csv, fetch_pm_xlsx
+  freshness.py           # StaleDataError raised if CSV mtime > freshness_max_hours
+  grouper.py             # group_by_manager(df, findings_df=None, pm_df=None) → list[ManagerDigest]
+  findings.py            # Pure: load_findings(), build_summary_for_machine() → FindingsSummary | None
+  pm_compliance.py       # Pure: load_pm_compliance(), build_pm_summary_for_machine() → PMSummary | None
+  renderer.py            # Jinja2 wrappers: render_html / render_text / render_admin_alert
+  mailer.py              # Graph API: _post_with_retry (3 attempts, exp backoff), send_mail, send_admin_alert
+  logging_setup.py       # configure() called once at startup
 templates/
-  email.html.j2      # Per-manager HTML digest; findings block per machine after levers
-  email.txt.j2       # Plain-text fallback; includes simplified findings block
+  email.html.j2          # Per-manager HTML digest; findings block then PM block per machine
+  email.txt.j2           # Plain-text fallback; includes findings and PM blocks
   admin_alert.html.j2
 tests/
-  fixtures/sample_summary.csv   # 3 machines, 2 managers
-  fixtures/sample_findings.csv  # 7 rows, 3 machines — Open/Missing WO/overdue/corroborated mix
-  test_grouper.py    # Unit tests for grouper (no network)
-  test_findings.py   # Unit tests for findings module (no network)
-  test_renderer.py   # Assertion-style template tests (no network, no snapshots)
+  fixtures/sample_summary.csv            # 3 machines, 2 managers
+  fixtures/sample_findings.csv           # 7 rows, 3 machines — Open/Missing WO/overdue/corroborated mix
+  fixtures/sample_pm_compliance.xlsx     # Sheet1 blank; Sheet2: 7 rows, 3 machines, mixed Urgency
+  test_grouper.py         # Unit tests for grouper (no network)
+  test_findings.py        # Unit tests for findings module (no network)
+  test_pm_compliance.py   # Unit tests for pm_compliance module (no network)
+  test_renderer.py        # Assertion-style template tests (no network, no snapshots)
   test_freshness.py
-config.yaml          # sharepoint_site_id, sharepoint_file_path, sharepoint_findings_path, sender_upn, admin_email
-.env                 # AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET (gitignored)
+config.yaml   # sharepoint_site_id, sharepoint_file_path, sharepoint_findings_path,
+              # sharepoint_pm_path, sender_upn, admin_email
+.env          # AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET (gitignored)
 ```
 
 ### Data flow
@@ -63,20 +71,23 @@ config.yaml          # sharepoint_site_id, sharepoint_file_path, sharepoint_find
 ```
 SharePoint
   MachineWeekSummary.csv ──► fetch_csv ──► freshness check ──► group_by_manager ──► ManagerDigest[]
-  Findings.csv ────────────► fetch_findings_csv ──► load_findings ──► findings_df ──┘
+  Findings.csv ────────────► fetch_findings_csv ──► load_findings ──► findings_df ──┤
+  PMComplianceDump.xlsx ───► fetch_pm_xlsx ──► load_pm_compliance ──► pm_df ─────────┘
                                                                                      │
-                                                                    build_summary_for_machine (per machine)
+                                                           build_summary_for_machine (findings, per machine)
+                                                           build_pm_summary_for_machine (PM, per machine)
                                                                                      │
-                                                                    MachineSummary.findings: FindingsSummary | None
+                                                           MachineSummary.findings: FindingsSummary | None
+                                                           MachineSummary.pm_summary: PMSummary | None
                                                                                      │
-                                                                    render_html / render_text ──► Graph /sendMail
+                                                           render_html / render_text ──► Graph /sendMail
 ```
 
-Findings fetch failure sends an admin alert but does **not** abort the digest — machines render without a findings block.
+Findings and PM fetch failures each send an admin alert but do **not** abort the digest — machines render without those blocks.
 
 ### MachineWeekSummary.csv schema (`grouper.py`)
 
-One row per machine. Join key for findings is `Plant` (plant number) + `WC Object ID`.
+One row per machine. Join key for findings is `Plant` + `WC Object ID`. Join key for PM compliance is `WC Object ID` only (see Plant format mismatch note below).
 
 | Column | Notes |
 |---|---|
@@ -127,6 +138,35 @@ class FindingsSummary:
 
 `build_summary_for_machine` returns `None` when no findings rows match — template omits the block entirely.
 
+### PMComplianceDump.xlsx schema (`pm_compliance.py`)
+
+Read from **Sheet2** only (`sheet_name=1`). `load_pm_compliance()` validates required columns and coerces types; no column renaming (names are used as-is).
+
+| Column | Notes |
+|---|---|
+| `WC Object ID` | Join key — matched against MachineWeekSummary `WC Object ID` |
+| `Core PM` | PM category (e.g. "Lubrication", "Inspection") |
+| `Urgency` | Integer; only `Urgency = 1` rows are counted (3+ weeks past Allowed Days) |
+| `Plant` | Present in file but **not used** in the join — see Plant format mismatch note |
+
+**Plant format mismatch:** `PMComplianceDump.xlsx` stores Plant as a short int (`8`); `MachineWeekSummary.csv` uses zero-padded strings (`0008`). Plant is excluded from the join entirely — `WC Object ID` is unique across plants and is sufficient.
+
+### `PMSummary` dataclass (per machine)
+
+```python
+@dataclass
+class PMCoreSummary:
+    core_pm: str
+    overdue_count: int        # count of Urgency=1 rows for this Core PM
+
+@dataclass
+class PMSummary:
+    total_overdue: int        # sum across all Core PMs
+    by_core_pm: list[PMCoreSummary]   # sorted overdue_count DESC
+```
+
+`build_pm_summary_for_machine` returns `None` when no Urgency=1 rows match — template omits the block entirely.
+
 ### Section → Lever corroboration (`SECTION_TO_LEVER_KEYWORDS` in `findings.py`)
 
 Maps `G.Section` values to keywords searched (case-insensitive) in lever names. Currently seeded with four sections; extend once the full `G.Section` value list is confirmed — no schema change needed.
@@ -143,13 +183,16 @@ SECTION_TO_LEVER_KEYWORDS = {
 ### Key design decisions
 
 - **`fetch.py` and `mailer.py` each acquire their own MSAL token** — no shared token object; each module is self-contained.
-- **`findings.py` is pure** — no I/O. `load_findings(bytes)` → DataFrame; `build_summary_for_machine(df, …)` → dataclass. Tests call both directly with no network.
-- **`grouper.py` is pure** — `findings_df=None` makes findings opt-in; existing callers are unchanged.
-- **Findings failure is non-fatal** — catches exceptions, sends admin alert, continues digest without findings block. Pattern reuses `send_admin_alert` at `mailer.py:85`.
+- **`findings.py` and `pm_compliance.py` are pure** — no I/O. Both follow the same contract: `load_X(bytes)` → DataFrame; `build_X_for_machine(df, …)` → dataclass or `None`. Tests call both directly with no network.
+- **`grouper.py` is pure** — `findings_df=None` and `pm_df=None` make both optional; existing callers are unchanged.
+- **Findings and PM failures are non-fatal** — each catches exceptions, sends an admin alert, and continues the digest without that block. Pattern reuses `send_admin_alert` at `mailer.py:85`.
+- **PM join uses `WC Object ID` only** — Plant is excluded because PMComplianceDump stores it as a short int (`8`) while MachineWeekSummary uses zero-padded strings (`0008`). `WC Object ID` is unique across plants.
+- **PM block placement** — amber table rendered immediately below the Findings block within each per-machine card; suppressed entirely when `pm_summary is None`.
 - **Renderer uses a module-level `_env`** — Jinja2 environment is created once at import time.
 - **Admin alerts are best-effort** — `send_admin_alert` swallows exceptions so a broken credential does not mask the original error.
 - **`--dry-run` writes to `out/preview/<email>.html`** — safe to run against production config.
+- **`test_without_mail.py`** — fetches all three SharePoint sources, renders previews to `out/test_preview/`, logs findings and PM attachment counts, writes a clickable `_index.html`.
 
 ### Upgrade path
 
-To replace Jinja2 with LLM prose, swap `src/renderer.py` for an Azure OpenAI call. `ManagerDigest` / `MachineSummary` / `LeverSummary` / `FindingsSummary` are the stable interface.
+To replace Jinja2 with LLM prose, swap `src/renderer.py` for an Azure OpenAI call. `ManagerDigest` / `MachineSummary` / `LeverSummary` / `FindingsSummary` / `PMSummary` are the stable interface.

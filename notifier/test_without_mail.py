@@ -20,8 +20,9 @@ import yaml
 from dotenv import load_dotenv
 
 from src import logging_setup
-from src.fetch import fetch_csv, fetch_findings_csv
+from src.fetch import fetch_csv, fetch_findings_csv, fetch_pm_xlsx
 from src.findings import load_findings
+from src.pm_compliance import load_pm_compliance
 from src.freshness import StaleDataError, assert_fresh
 from src.grouper import group_by_manager
 from src.renderer import render_html, render_text
@@ -66,12 +67,16 @@ def _write_index(digests, subject: str, out_dir: Path) -> None:
         findings_count = sum(
             (m.findings.total_open if m.findings else 0) for m in digest.machines
         )
+        pm_count = sum(
+            (m.pm_summary.total_overdue if m.pm_summary else 0) for m in digest.machines
+        )
         rows.append(
             f'<tr>'
             f'<td><a href="{safe}.html">{digest.manager_email}</a></td>'
             f'<td style="text-align:right">{len(digest.machines)}</td>'
             f'<td style="text-align:right">{total:,.0f}</td>'
             f'<td style="text-align:right">{findings_count}</td>'
+            f'<td style="text-align:right">{pm_count}</td>'
             f'</tr>'
         )
 
@@ -98,6 +103,7 @@ def _write_index(digests, subject: str, out_dir: Path) -> None:
         <th>Machines</th>
         <th>Total Sheet Impact</th>
         <th>Open Findings</th>
+        <th>Overdue PMs</th>
       </tr>
     </thead>
     <tbody>
@@ -146,6 +152,19 @@ def main(args: argparse.Namespace) -> int:
     else:
         log.info("sharepoint_findings_path not configured — skipping findings")
 
+    # --- Fetch PMComplianceDump.xlsx (non-fatal) ---
+    pm_df = None
+    if config.get("sharepoint_pm_path"):
+        log.info("Fetching PMComplianceDump.xlsx …")
+        try:
+            pm_bytes = fetch_pm_xlsx(config, env)
+            pm_df = load_pm_compliance(pm_bytes)
+            log.info("PM compliance loaded: %d rows", len(pm_df))
+        except Exception as exc:
+            log.warning("PM compliance fetch failed — digest will render without PM block: %s", exc)
+    else:
+        log.info("sharepoint_pm_path not configured — skipping PM compliance")
+
     # --- Group and render ---
     df = pd.read_csv(io.BytesIO(csv_bytes))
 
@@ -168,15 +187,17 @@ def main(args: argparse.Namespace) -> int:
     if "WC Object ID" in df.columns:
         log.info("Summary WC Object IDs: %s", df["WC Object ID"].astype(str).unique().tolist())
 
-    digests = group_by_manager(df, findings_df=findings_df)
+    digests = group_by_manager(df, findings_df=findings_df, pm_df=pm_df)
 
     if not digests:
         log.warning("No manager digests — MachineWeekSummary.csv may be empty")
         return 0
 
-    attached = sum(1 for d in digests for m in d.machines if m.findings is not None)
     total_machines_count = sum(len(d.machines) for d in digests)
-    log.info("Findings attached: %d / %d machines", attached, total_machines_count)
+    attached_findings = sum(1 for d in digests for m in d.machines if m.findings is not None)
+    attached_pm = sum(1 for d in digests for m in d.machines if m.pm_summary is not None)
+    log.info("Findings attached: %d / %d machines", attached_findings, total_machines_count)
+    log.info("PM blocks attached: %d / %d machines", attached_pm, total_machines_count)
 
     period_start = digests[0].period_start
     subject = f"{config.get('email_subject_prefix', 'Weekly OEE Insight')} — {period_start}"

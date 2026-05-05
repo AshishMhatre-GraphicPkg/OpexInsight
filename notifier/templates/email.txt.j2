@@ -29,6 +29,14 @@ Maintenance Findings:
 {% endif %}
 {% endif %}
 
+{% if m.pm_summary %}
+--- OVERDUE PREVENTIVE MAINTENANCE (3+ Weeks Past Due) ---
+{% for row in m.pm_summary.by_core_pm %}
+  {{ row.core_pm }}: {{ row.overdue_count }} overdue
+{% endfor %}
+  TOTAL: {{ m.pm_summary.total_overdue }}
+{% endif %}
+
 {% endfor %}
 
 ---

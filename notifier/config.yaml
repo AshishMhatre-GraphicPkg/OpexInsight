@@ -6,6 +6,7 @@ sharepoint_drive_id: "b!qFpJMe3-x0CNY-YP87p8rewWnQzQ4zlPrA9Hb42GfQOmwrb-nsDQQbAl
 # Path within the library (do NOT include the library name itself)
 sharepoint_file_path: "Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/MachineWeekSummary.csv"
 sharepoint_findings_path: "Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/Findings.csv"
+sharepoint_pm_path: "Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PMComplianceDump.xlsx"
 
 # How old the CSV is allowed to be before aborting and alerting (hours)
 freshness_max_hours: 24
