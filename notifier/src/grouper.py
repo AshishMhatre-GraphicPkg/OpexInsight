@@ -31,14 +31,13 @@ _LEVER_FIELDS = ("Name", "Reasons", "Sheets", "Gap_Pct", "Streak", "Parent_Outco
 _PERCENT_LEVERS = {
     "OEE",
     "Downtime %", "Scrap Rate",
-    "Downtime Reason", "Scrap Reason", "Feeder DT%", "Blanket DT%",
+    "Downtime Reason", "Scrap Reason",
 }
 
 _LOWER_IS_BETTER_LEVERS = {
-    "Downtime %", "Scrap Rate", "Setup Hrs/Event", "Setup Frequency",
+    "Downtime %", "Scrap Rate", "Avg MR Time",
     "Downtime Reason", "Scrap Reason",
-    "Feeder DT%", "Feeder Count Rate", "Feeder Per10K",
-    "Blanket DT%", "Blanket Count Rate", "Blanket Per10K",
+    "Avg Blanket Wash Time", "Avg Feeder Trip Time",
 }
 
 
@@ -135,6 +134,15 @@ def group_by_manager(
     """
     if _COL_MANAGER not in df.columns:
         raise ValueError(f"CSV missing column '{_COL_MANAGER}'")
+
+    required = {_COL_TOTAL, _COL_PLANT_WC, _COL_PERIOD}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(
+            f"CSV is missing required columns: {sorted(missing)}\n"
+            f"Columns present: {sorted(df.columns.tolist())}\n"
+            "The Qlik app may need to be reloaded with the latest script."
+        )
 
     df = df.sort_values(_COL_TOTAL, ascending=False)
     digests: list[ManagerDigest] = []

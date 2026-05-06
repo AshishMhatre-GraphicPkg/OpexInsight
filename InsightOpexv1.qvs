@@ -195,6 +195,12 @@ MAPPING LOAD
     "Board Caliper"
 RESIDENT [Materials_Temp];
 
+MaterialDesc_Map:
+MAPPING LOAD
+    Material,
+    "Material Description"
+RESIDENT [Materials_Temp];
+
 DROP TABLE [PlantMaterial_Temp];
 DROP TABLE [Materials_Temp];
 DROP TABLE [BoardTypes_Temp];
@@ -365,7 +371,15 @@ LOAD
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in OEE UOM",  0))                        as GoodQty_OEE,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM",  0))                        as ScrapQty_OEE,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in BUOM",     0))                        as GoodQty_BUOM,
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in BUOM",     0))                        as ScrapQty_BUOM
+    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in BUOM",     0))                        as ScrapQty_BUOM,
+    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
+        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                             as BlanketWashHours,
+    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
+        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count",  0))                             as BlanketWashEvents,
+    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
+        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                             as FeederTripHours,
+    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
+        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count",  0))                             as FeederTripEvents
 RESIDENT JobFact_Raw
 WHERE Date >= $(v2YearStart) AND Date < $(vCurrentWeekStart)
 GROUP BY
@@ -414,7 +428,12 @@ LOAD
     RunHours *
         If(ApplyMap('Department_Map', "WC Object ID", '') = 'Gluer'
             OR ApplyMap('Department_Map', "WC Object ID", '') = 'Window',
-            MaxGluerCPH, OEMSpeed)                                                              as Perf_Denom
+            MaxGluerCPH, OEMSpeed)                                                              as Perf_Denom,
+    BlanketWashHours,
+    BlanketWashEvents,
+    FeederTripHours,
+    FeederTripEvents,
+    If(SetupCount > 0, (GoodQty_OEE + ScrapQty_OEE) / SetupCount, Null())                      as ARQ
 RESIDENT JobFact_Job_BSP_Agg
 WHERE RunHours > 2;
 
@@ -480,7 +499,15 @@ LOAD
     Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Non-Crewed", 0))                        as NonCrewedHours,
     Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Setup Count",       0))                        as SetupCount,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in OEE UOM",  0))                        as GoodQty_OEE,
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM",  0))                        as ScrapQty_OEE
+    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM",  0))                        as ScrapQty_OEE,
+    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
+        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                             as BlanketWashHours,
+    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
+        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count",  0))                             as BlanketWashEvents,
+    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
+        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                             as FeederTripHours,
+    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
+        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count",  0))                             as FeederTripEvents
 RESIDENT JobFact_Raw
 WHERE
     Date >= $(v2YearStart) AND Date < $(vCurrentWeekStart)
@@ -525,7 +552,13 @@ LOAD
             OR ApplyMap('Department_Map', "WC Object ID", '') = 'Window',
             MaxGluerCPH, OEMSpeed)                                                              as Perf_Denom,
     ApplyMap('BoardTypeGroup_Map', ApplyMap('BoardType_Map', PltMatKey, Null()),   Null())       as "Board Type Group",
-    ApplyMap('BoardCaliper_Map',   ApplyMap('Material_Map',  PltMatKey, Null()),   Null())       as "Board Caliper"
+    ApplyMap('BoardCaliper_Map',   ApplyMap('Material_Map',  PltMatKey, Null()),   Null())       as "Board Caliper",
+    ApplyMap('MaterialDesc_Map',   ApplyMap('Material_Map',  PltMatKey, Null()),   Null())       as MaterialDescription,
+    BlanketWashHours,
+    BlanketWashEvents,
+    FeederTripHours,
+    FeederTripEvents,
+    If(SetupCount > 0, (GoodQty_OEE + ScrapQty_OEE) / SetupCount, Null())                      as ARQ
 RESIDENT JobFact_Job_BSP_L2_Agg;
 
 DROP TABLE JobFact_Job_BSP_L2_Agg;
@@ -652,125 +685,6 @@ RESIDENT JobFact_ScrapReason_BSP_Agg;
 
 DROP TABLE JobFact_ScrapReason_BSP_Agg;
 
-// ============================================================
-// SECTION 14: FEEDER TRIPS BSP SOURCE AGGREGATION
-// Reasons : PLG5 (Feeder Trips - Operator), PLDF (Mechanical Feeder),
-//           PLF (Feeder - Press Crew)
-// WildMatch used to match partial-key reason codes consistently
-// with the WildMatch('*MR0*') pattern elsewhere in the script
-// Grain   : Date + WC Object ID + Shift Code + Die + PltMatKey
-// Filter  : qualifying runs only via QualifyingRuns_Map
-// ============================================================
-
-JobFact_FeederBSP_Agg:
-NoConcatenate
-LOAD
-    Date,
-    "WC Object ID",
-    Die,
-    "Shift Code",
-    "Plant Material Key"                                                                          as PltMatKey,
-    Only("Carton Style")                                                                          as CartonStyle,
-    Max(NumberUp)                                                                                 as NumberUp,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                               as FeederDownHours,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count", 0))                                as FeederDownCount,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1,
-        "Time - Run" + "Time - Down" + "Time - Setup"
-        + "Time - Setup Down" + "Time - Non-Crewed", 0))                                          as SchedHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1,
-        "Yield in OEE UOM" + "Scrap in OEE UOM", 0))                                             as TotalQty_OEE
-RESIDENT JobFact_Raw
-WHERE
-    Date >= $(v2YearStart) AND Date < $(vCurrentWeekStart)
-    AND ApplyMap('QualifyingRuns_Map',
-            Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die, 0) = 1
-GROUP BY Date, "WC Object ID", Die, "Shift Code", "Plant Material Key";
-
-JobFact_FeederBSP:
-NoConcatenate
-LOAD
-    "WC Object ID",
-    Die,
-    PltMatKey,
-    CartonStyle,
-    NumberUp,
-    FeederDownHours,
-    FeederDownCount,
-    SchedHours,
-    TotalQty_OEE,
-    ApplyMap('Plant_Map',      "WC Object ID", 'Unknown')                                         as Plant,
-    ApplyMap('Department_Map', "WC Object ID", 'Unknown')                                         as Department,
-    If(Match(ApplyMap('Department_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
-            Text(CartonStyle),
-        If(Match(ApplyMap('Department_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
-            Text(NumberUp), ''))                                                                   as L2_ExtraDim,
-    ApplyMap('BoardTypeGroup_Map', ApplyMap('BoardType_Map', PltMatKey, Null()), Null())           as "Board Type Group",
-    ApplyMap('BoardCaliper_Map',   ApplyMap('Material_Map',  PltMatKey, Null()), Null())           as "Board Caliper"
-RESIDENT JobFact_FeederBSP_Agg;
-
-DROP TABLE JobFact_FeederBSP_Agg;
-
-
-// ============================================================
-// SECTION 15: BLANKET WASHES BSP SOURCE AGGREGATION
-// Reason  : PQBW (Blanket Wash Normal)
-// Grain   : Date + WC Object ID + Shift Code + Die + PltMatKey
-// Filter  : qualifying runs only via QualifyingRuns_Map
-// ============================================================
-
-JobFact_BlanketBSP_Agg:
-NoConcatenate
-LOAD
-    Date,
-    "WC Object ID",
-    Die,
-    "Shift Code",
-    "Plant Material Key"                                                                          as PltMatKey,
-    Only("Carton Style")                                                                          as CartonStyle,
-    Max(NumberUp)                                                                                 as NumberUp,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                               as BlanketDownHours,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count", 0))                                as BlanketDownCount,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1,
-        "Time - Run" + "Time - Down" + "Time - Setup"
-        + "Time - Setup Down" + "Time - Non-Crewed", 0))                                          as SchedHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1,
-        "Yield in OEE UOM" + "Scrap in OEE UOM", 0))                                             as TotalQty_OEE
-RESIDENT JobFact_Raw
-WHERE
-    Date >= $(v2YearStart) AND Date < $(vCurrentWeekStart)
-    AND ApplyMap('QualifyingRuns_Map',
-            Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die, 0) = 1
-GROUP BY Date, "WC Object ID", Die, "Shift Code", "Plant Material Key";
-
-JobFact_BlanketBSP:
-NoConcatenate
-LOAD
-    "WC Object ID",
-    Die,
-    PltMatKey,
-    CartonStyle,
-    NumberUp,
-    BlanketDownHours,
-    BlanketDownCount,
-    SchedHours,
-    TotalQty_OEE,
-    ApplyMap('Plant_Map',      "WC Object ID", 'Unknown')                                         as Plant,
-    ApplyMap('Department_Map', "WC Object ID", 'Unknown')                                         as Department,
-    If(Match(ApplyMap('Department_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
-            Text(CartonStyle),
-        If(Match(ApplyMap('Department_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
-            Text(NumberUp), ''))                                                                   as L2_ExtraDim,
-    ApplyMap('BoardTypeGroup_Map', ApplyMap('BoardType_Map', PltMatKey, Null()), Null())           as "Board Type Group",
-    ApplyMap('BoardCaliper_Map',   ApplyMap('Material_Map',  PltMatKey, Null()), Null())           as "Board Caliper"
-RESIDENT JobFact_BlanketBSP_Agg;
-
-DROP TABLE JobFact_BlanketBSP_Agg;
-
-
 DROP MAPPING TABLE QualifyingRuns_Map;
 DROP MAPPING TABLE SchedHours_Map;
 DROP MAPPING TABLE TotalQty_Map;
@@ -812,7 +726,15 @@ LOAD
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in OEE UOM",  0))                        as GoodQty_OEE,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM",  0))                        as ScrapQty_OEE,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in BUOM",     0))                        as GoodQty_BUOM,
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in BUOM",     0))                        as ScrapQty_BUOM
+    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in BUOM",     0))                        as ScrapQty_BUOM,
+    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
+        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                             as BlanketWashHours,
+    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
+        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count",  0))                             as BlanketWashEvents,
+    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
+        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                             as FeederTripHours,
+    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
+        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count",  0))                             as FeederTripEvents
 RESIDENT JobFact_Raw
 WHERE Date >= $(v13WeekStart) AND Date < $(vCurrentWeekStart)
 GROUP BY
@@ -877,7 +799,12 @@ LOAD
             MaxGluerCPH, OEMSpeed)                                                              as Perf_Denom,
     ApplyMap('BoardType_Map',      PltMatKey,                                     Null())       as "Board Type",
     ApplyMap('BoardTypeGroup_Map', ApplyMap('BoardType_Map', PltMatKey, Null()),   Null())       as "Board Type Group",
-    ApplyMap('BoardCaliper_Map',   ApplyMap('Material_Map',  PltMatKey, Null()),   Null())       as "Board Caliper"
+    ApplyMap('BoardCaliper_Map',   ApplyMap('Material_Map',  PltMatKey, Null()),   Null())       as "Board Caliper",
+    ApplyMap('MaterialDesc_Map',   ApplyMap('Material_Map',  PltMatKey, Null()),   Null())       as MaterialDescription,
+    BlanketWashHours,
+    BlanketWashEvents,
+    FeederTripHours,
+    FeederTripEvents
 RESIDENT JobFact_Scoring_Agg;
 
 DROP TABLE JobFact_Scoring_Agg;
@@ -888,6 +815,7 @@ DROP MAPPING TABLE BoardType_Map;
 DROP MAPPING TABLE Material_Map;
 DROP MAPPING TABLE BoardTypeGroup_Map;
 DROP MAPPING TABLE BoardCaliper_Map;
+DROP MAPPING TABLE MaterialDesc_Map;
 // OrderOp_NumberUp_Map kept alive — still needed for reason die-level
 // aggregations in Sections 40–41. Dropped at end of Section 41.
 ///$tab Step 4
@@ -908,7 +836,6 @@ LOAD
     Count(1)                                                                                    as L1_RunCount,
     FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.75)                  as L1_BSP_OEE,
     FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.75)                  as L1_BSP_Speed,
-    FRACTILE(If(RunHours + DownHours > 0, GoodQty_OEE / (RunHours + DownHours), Null()), 0.75) as L1_BSP_NetThroughput,
     FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.25)                  as L1_BSP_DowntimePct,
     FRACTILE(DownHours,                                                   0.25)                  as L1_BSP_DowntimeHrs,
     FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.25)                  as L1_BSP_ScrapRate
@@ -939,7 +866,6 @@ LOAD
     Count(1)                                                                                    as L2_RunCount,
     FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.75)                  as L2_BSP_OEE,
     FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.75)                  as L2_BSP_Speed,
-    FRACTILE(If(RunHours + DownHours > 0, GoodQty_OEE / (RunHours + DownHours), Null()), 0.75) as L2_BSP_NetThroughput,
     FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.25)                  as L2_BSP_DowntimePct,
     FRACTILE(DownHours,                                                   0.25)                  as L2_BSP_DowntimeHrs,
     FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.25)                  as L2_BSP_ScrapRate
@@ -967,7 +893,6 @@ LOAD
     Count(1)                                                                                    as L3_RunCount,
     FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.75)                  as L3_BSP_OEE,
     FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.75)                  as L3_BSP_Speed,
-    FRACTILE(If(RunHours + DownHours > 0, GoodQty_OEE / (RunHours + DownHours), Null()), 0.75) as L3_BSP_NetThroughput,
     FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.25)                  as L3_BSP_DowntimePct,
     FRACTILE(DownHours,                                                   0.25)                  as L3_BSP_DowntimeHrs,
     FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.25)                  as L3_BSP_ScrapRate
@@ -996,8 +921,7 @@ LOAD
     Die,
     MROClass,
     Count(1)                                                                                    as L1_SetupRunCount,
-    FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.25)                      as L1_BSP_SetupHrsPerEvent,
-    FRACTILE(If(SchedHours   > 0, SetupCount / SchedHours,  Null()), 0.25)                      as L1_BSP_SetupFrequency
+    FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.25)                      as L1_BSP_SetupHrsPerEvent
 RESIDENT JobFact_Job_BSP
 WHERE SetupCount > 0 AND Not IsNull(MROClass)
 GROUP BY Plant, "WC Object ID", Die, MROClass;
@@ -1025,8 +949,7 @@ LOAD
     L2_ExtraDim,
     MROClass,
     Count(1)                                                                                    as L2_SetupRunCount,
-    FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.25)                      as L2_BSP_SetupHrsPerEvent,
-    FRACTILE(If(SchedHours   > 0, SetupCount / SchedHours,  Null()), 0.25)                      as L2_BSP_SetupFrequency
+    FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.25)                      as L2_BSP_SetupHrsPerEvent
 RESIDENT JobFact_Job_BSP_L2
 WHERE SetupCount > 0
     AND Not IsNull(MROClass)
@@ -1053,8 +976,7 @@ LOAD
     "WC Object ID",
     MROClass,
     Count(1)                                                                                    as L3_SetupRunCount,
-    FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.25)                      as L3_BSP_SetupHrsPerEvent,
-    FRACTILE(If(SchedHours   > 0, SetupCount / SchedHours,  Null()), 0.25)                      as L3_BSP_SetupFrequency
+    FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.25)                      as L3_BSP_SetupHrsPerEvent
 RESIDENT JobFact_Job_BSP
 WHERE SetupCount > 0 AND Not IsNull(MROClass)
 GROUP BY Plant, "WC Object ID", MROClass;
@@ -1229,36 +1151,34 @@ DROP TABLE JobFact_ScrapReason_BSP;
 
 
 // ============================================================
-// SECTION 29A: FEEDER TRIPS BSP — ALL 3 LEVELS, 3 METRICS
-// Metrics (all lower-is-better, P10):
-//   DTPct   : FeederDownHours / SchedHours
-//   CntRate : FeederDownCount / SchedHours  (count per scheduled hr)
-//   Per10K  : FeederDownCount / TotalQty_OEE * 10000
-// L1 grain : Plant + WC + Die            (min 10 runs)
-// L2 grain : Plant + WC + BTG + BC + L2  (min 20 runs)
-// L3 grain : Plant + WC                  (min 30 runs)
+// SECTION 29A: AVG BLANKET WASH TIME BSP — ALL 3 LEVELS
+// Metric : BlanketWashHours / BlanketWashEvents (hrs per event)
+// Direction : lower-is-better (P25)
+// Filter  : BlanketWashEvents > 0 (machine had blanket wash events)
+// L1 grain : Plant + WC + Die
+// L2 grain : Plant + WC + BTG + BC + L2_ExtraDim
+// L3 grain : Plant + WC
 // ============================================================
 
-BSP_Feeder_L1_Raw:
+BSP_BlanketWashTime_L1_Raw:
 NoConcatenate
 LOAD
     Plant,
     "WC Object ID",
     Die,
-    Count(1)                                                                                      as Fdr_L1_Count,
-    FRACTILE(If(SchedHours > 0, FeederDownHours / SchedHours, Null()), 0.25)                      as L1_BSP_FeederDTPct,
-    FRACTILE(If(SchedHours > 0, FeederDownCount / SchedHours, Null()), 0.25)                      as L1_BSP_FeederCntRate,
-    FRACTILE(If(TotalQty_OEE > 0, FeederDownCount / TotalQty_OEE * 10000, Null()), 0.25)         as L1_BSP_FeederPer10K
-RESIDENT JobFact_FeederBSP
+    Count(1)                                                                                      as BWT_L1_Count,
+    FRACTILE(If(BlanketWashEvents > 0, BlanketWashHours / BlanketWashEvents, Null()), 0.25)       as L1_BSP_BlanketWashTime
+RESIDENT JobFact_Job_BSP
+WHERE BlanketWashEvents > 0
 GROUP BY Plant, "WC Object ID", Die;
 
-BSP_Feeder_L1:
+BSP_BlanketWashTime_L1:
 NoConcatenate
-LOAD * RESIDENT BSP_Feeder_L1_Raw WHERE Fdr_L1_Count >= $(vBSP_L1_Min);
-DROP TABLE BSP_Feeder_L1_Raw;
+LOAD * RESIDENT BSP_BlanketWashTime_L1_Raw WHERE BWT_L1_Count >= $(vBSP_L1_Min);
+DROP TABLE BSP_BlanketWashTime_L1_Raw;
 
 
-BSP_Feeder_L2_Raw:
+BSP_BlanketWashTime_L2_Raw:
 NoConcatenate
 LOAD
     Plant,
@@ -1266,68 +1186,62 @@ LOAD
     "Board Type Group",
     "Board Caliper",
     L2_ExtraDim,
-    Count(1)                                                                                      as Fdr_L2_Count,
-    FRACTILE(If(SchedHours > 0, FeederDownHours / SchedHours, Null()), 0.25)                      as L2_BSP_FeederDTPct,
-    FRACTILE(If(SchedHours > 0, FeederDownCount / SchedHours, Null()), 0.25)                      as L2_BSP_FeederCntRate,
-    FRACTILE(If(TotalQty_OEE > 0, FeederDownCount / TotalQty_OEE * 10000, Null()), 0.25)         as L2_BSP_FeederPer10K
-RESIDENT JobFact_FeederBSP
-WHERE Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
+    Count(1)                                                                                      as BWT_L2_Count,
+    FRACTILE(If(BlanketWashEvents > 0, BlanketWashHours / BlanketWashEvents, Null()), 0.25)       as L2_BSP_BlanketWashTime
+RESIDENT JobFact_Job_BSP_L2
+WHERE BlanketWashEvents > 0
+    AND Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
 GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim;
 
-BSP_Feeder_L2:
+BSP_BlanketWashTime_L2:
 NoConcatenate
-LOAD * RESIDENT BSP_Feeder_L2_Raw WHERE Fdr_L2_Count >= $(vBSP_L2_Min);
-DROP TABLE BSP_Feeder_L2_Raw;
+LOAD * RESIDENT BSP_BlanketWashTime_L2_Raw WHERE BWT_L2_Count >= $(vBSP_L2_Min);
+DROP TABLE BSP_BlanketWashTime_L2_Raw;
 
 
-BSP_Feeder_L3_Raw:
+BSP_BlanketWashTime_L3_Raw:
 NoConcatenate
 LOAD
     Plant,
     "WC Object ID",
-    Count(1)                                                                                      as Fdr_L3_Count,
-    FRACTILE(If(SchedHours > 0, FeederDownHours / SchedHours, Null()), 0.25)                      as L3_BSP_FeederDTPct,
-    FRACTILE(If(SchedHours > 0, FeederDownCount / SchedHours, Null()), 0.25)                      as L3_BSP_FeederCntRate,
-    FRACTILE(If(TotalQty_OEE > 0, FeederDownCount / TotalQty_OEE * 10000, Null()), 0.25)         as L3_BSP_FeederPer10K
-RESIDENT JobFact_FeederBSP
+    Count(1)                                                                                      as BWT_L3_Count,
+    FRACTILE(If(BlanketWashEvents > 0, BlanketWashHours / BlanketWashEvents, Null()), 0.25)       as L3_BSP_BlanketWashTime
+RESIDENT JobFact_Job_BSP
+WHERE BlanketWashEvents > 0
 GROUP BY Plant, "WC Object ID";
 
-BSP_Feeder_L3:
+BSP_BlanketWashTime_L3:
 NoConcatenate
-LOAD * RESIDENT BSP_Feeder_L3_Raw WHERE Fdr_L3_Count >= $(vBSP_L3_Min);
-DROP TABLE BSP_Feeder_L3_Raw;
-
-DROP TABLE JobFact_FeederBSP;
+LOAD * RESIDENT BSP_BlanketWashTime_L3_Raw WHERE BWT_L3_Count >= $(vBSP_L3_Min);
+DROP TABLE BSP_BlanketWashTime_L3_Raw;
 
 
 // ============================================================
-// SECTION 29B: BLANKET WASHES BSP — ALL 3 LEVELS, 3 METRICS
-// Metrics (all lower-is-better, P10):
-//   DTPct   : BlanketDownHours / SchedHours
-//   CntRate : BlanketDownCount / SchedHours  (count per scheduled hr)
-//   Per10K  : BlanketDownCount / TotalQty_OEE * 10000
+// SECTION 29B: AVG FEEDER TRIP TIME BSP — ALL 3 LEVELS
+// Metric : FeederTripHours / FeederTripEvents (hrs per event)
+// Direction : lower-is-better (P25)
+// Filter  : FeederTripEvents > 0
 // ============================================================
 
-BSP_Blanket_L1_Raw:
+BSP_FeederTripTime_L1_Raw:
 NoConcatenate
 LOAD
     Plant,
     "WC Object ID",
     Die,
-    Count(1)                                                                                      as Blk_L1_Count,
-    FRACTILE(If(SchedHours > 0, BlanketDownHours / SchedHours, Null()), 0.25)                     as L1_BSP_BlanketDTPct,
-    FRACTILE(If(SchedHours > 0, BlanketDownCount / SchedHours, Null()), 0.25)                     as L1_BSP_BlanketCntRate,
-    FRACTILE(If(TotalQty_OEE > 0, BlanketDownCount / TotalQty_OEE * 10000, Null()), 0.25)        as L1_BSP_BlanketPer10K
-RESIDENT JobFact_BlanketBSP
+    Count(1)                                                                                      as FTT_L1_Count,
+    FRACTILE(If(FeederTripEvents > 0, FeederTripHours / FeederTripEvents, Null()), 0.25)          as L1_BSP_FeederTripTime
+RESIDENT JobFact_Job_BSP
+WHERE FeederTripEvents > 0
 GROUP BY Plant, "WC Object ID", Die;
 
-BSP_Blanket_L1:
+BSP_FeederTripTime_L1:
 NoConcatenate
-LOAD * RESIDENT BSP_Blanket_L1_Raw WHERE Blk_L1_Count >= $(vBSP_L1_Min);
-DROP TABLE BSP_Blanket_L1_Raw;
+LOAD * RESIDENT BSP_FeederTripTime_L1_Raw WHERE FTT_L1_Count >= $(vBSP_L1_Min);
+DROP TABLE BSP_FeederTripTime_L1_Raw;
 
 
-BSP_Blanket_L2_Raw:
+BSP_FeederTripTime_L2_Raw:
 NoConcatenate
 LOAD
     Plant,
@@ -1335,38 +1249,100 @@ LOAD
     "Board Type Group",
     "Board Caliper",
     L2_ExtraDim,
-    Count(1)                                                                                      as Blk_L2_Count,
-    FRACTILE(If(SchedHours > 0, BlanketDownHours / SchedHours, Null()), 0.25)                     as L2_BSP_BlanketDTPct,
-    FRACTILE(If(SchedHours > 0, BlanketDownCount / SchedHours, Null()), 0.25)                     as L2_BSP_BlanketCntRate,
-    FRACTILE(If(TotalQty_OEE > 0, BlanketDownCount / TotalQty_OEE * 10000, Null()), 0.25)        as L2_BSP_BlanketPer10K
-RESIDENT JobFact_BlanketBSP
-WHERE Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
+    Count(1)                                                                                      as FTT_L2_Count,
+    FRACTILE(If(FeederTripEvents > 0, FeederTripHours / FeederTripEvents, Null()), 0.25)          as L2_BSP_FeederTripTime
+RESIDENT JobFact_Job_BSP_L2
+WHERE FeederTripEvents > 0
+    AND Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
 GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim;
 
-BSP_Blanket_L2:
+BSP_FeederTripTime_L2:
 NoConcatenate
-LOAD * RESIDENT BSP_Blanket_L2_Raw WHERE Blk_L2_Count >= $(vBSP_L2_Min);
-DROP TABLE BSP_Blanket_L2_Raw;
+LOAD * RESIDENT BSP_FeederTripTime_L2_Raw WHERE FTT_L2_Count >= $(vBSP_L2_Min);
+DROP TABLE BSP_FeederTripTime_L2_Raw;
 
 
-BSP_Blanket_L3_Raw:
+BSP_FeederTripTime_L3_Raw:
 NoConcatenate
 LOAD
     Plant,
     "WC Object ID",
-    Count(1)                                                                                      as Blk_L3_Count,
-    FRACTILE(If(SchedHours > 0, BlanketDownHours / SchedHours, Null()), 0.25)                     as L3_BSP_BlanketDTPct,
-    FRACTILE(If(SchedHours > 0, BlanketDownCount / SchedHours, Null()), 0.25)                     as L3_BSP_BlanketCntRate,
-    FRACTILE(If(TotalQty_OEE > 0, BlanketDownCount / TotalQty_OEE * 10000, Null()), 0.25)        as L3_BSP_BlanketPer10K
-RESIDENT JobFact_BlanketBSP
+    Count(1)                                                                                      as FTT_L3_Count,
+    FRACTILE(If(FeederTripEvents > 0, FeederTripHours / FeederTripEvents, Null()), 0.25)          as L3_BSP_FeederTripTime
+RESIDENT JobFact_Job_BSP
+WHERE FeederTripEvents > 0
 GROUP BY Plant, "WC Object ID";
 
-BSP_Blanket_L3:
+BSP_FeederTripTime_L3:
 NoConcatenate
-LOAD * RESIDENT BSP_Blanket_L3_Raw WHERE Blk_L3_Count >= $(vBSP_L3_Min);
-DROP TABLE BSP_Blanket_L3_Raw;
+LOAD * RESIDENT BSP_FeederTripTime_L3_Raw WHERE FTT_L3_Count >= $(vBSP_L3_Min);
+DROP TABLE BSP_FeederTripTime_L3_Raw;
 
-DROP TABLE JobFact_BlanketBSP;
+
+// ============================================================
+// SECTION 29C: ARQ (AVG RUN QUANTITY) BSP — ALL 3 LEVELS
+// Metric : TotalQty_OEE / SetupCount (sheets per setup)
+// Direction : higher-is-better (P75)
+// L1 grain : Plant + WC + Die + MaterialDescription
+// L2 grain : Plant + WC + BTG + BC + L2_ExtraDim
+// L3 grain : Plant + WC
+// ============================================================
+
+BSP_ARQ_L1_Raw:
+NoConcatenate
+LOAD
+    Plant,
+    "WC Object ID",
+    Die,
+    MaterialDescription,
+    Count(1)                                                                                      as ARQ_L1_Count,
+    FRACTILE(ARQ, 0.75)                                                                           as L1_BSP_ARQ
+RESIDENT JobFact_Job_BSP_L2
+WHERE Not IsNull(ARQ) AND Not IsNull(MaterialDescription)
+GROUP BY Plant, "WC Object ID", Die, MaterialDescription;
+
+BSP_ARQ_L1:
+NoConcatenate
+LOAD * RESIDENT BSP_ARQ_L1_Raw WHERE ARQ_L1_Count >= $(vBSP_L1_Min);
+DROP TABLE BSP_ARQ_L1_Raw;
+
+
+BSP_ARQ_L2_Raw:
+NoConcatenate
+LOAD
+    Plant,
+    "WC Object ID",
+    "Board Type Group",
+    "Board Caliper",
+    L2_ExtraDim,
+    Count(1)                                                                                      as ARQ_L2_Count,
+    FRACTILE(ARQ, 0.75)                                                                           as L2_BSP_ARQ
+RESIDENT JobFact_Job_BSP_L2
+WHERE Not IsNull(ARQ)
+    AND Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
+GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim;
+
+BSP_ARQ_L2:
+NoConcatenate
+LOAD * RESIDENT BSP_ARQ_L2_Raw WHERE ARQ_L2_Count >= $(vBSP_L2_Min);
+DROP TABLE BSP_ARQ_L2_Raw;
+
+
+BSP_ARQ_L3_Raw:
+NoConcatenate
+LOAD
+    Plant,
+    "WC Object ID",
+    Count(1)                                                                                      as ARQ_L3_Count,
+    FRACTILE(ARQ, 0.75)                                                                           as L3_BSP_ARQ
+RESIDENT JobFact_Job_BSP_L2
+WHERE Not IsNull(ARQ)
+GROUP BY Plant, "WC Object ID";
+
+BSP_ARQ_L3:
+NoConcatenate
+LOAD * RESIDENT BSP_ARQ_L3_Raw WHERE ARQ_L3_Count >= $(vBSP_L3_Min);
+DROP TABLE BSP_ARQ_L3_Raw;
 
 
 ///$tab Step 5
@@ -1398,10 +1374,6 @@ BSP_L1_Speed_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_Speed
 RESIDENT BSP_Main_L1;
 
-BSP_L1_NetThroughput_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_NetThroughput
-RESIDENT BSP_Main_L1;
-
 BSP_L1_DTPct_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_DowntimePct
 RESIDENT BSP_Main_L1;
@@ -1426,10 +1398,6 @@ RESIDENT BSP_Main_L2;
 
 BSP_L2_Speed_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_Speed
-RESIDENT BSP_Main_L2;
-
-BSP_L2_NetThroughput_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_NetThroughput
 RESIDENT BSP_Main_L2;
 
 BSP_L2_DTPct_Map:
@@ -1458,10 +1426,6 @@ BSP_L3_Speed_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_Speed
 RESIDENT BSP_Main_L3;
 
-BSP_L3_NetThroughput_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_NetThroughput
-RESIDENT BSP_Main_L3;
-
 BSP_L3_DTPct_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_DowntimePct
 RESIDENT BSP_Main_L3;
@@ -1480,12 +1444,9 @@ RESIDENT BSP_Main_L3;
 
 DROP TABLE BSP_Main_L3;
 
+// L1 key for Avg MR Time includes MaterialDescription to narrow grain
 BSP_L1_SetupHrsEv_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die & '|' & MROClass, L1_BSP_SetupHrsPerEvent
-RESIDENT BSP_Setup_L1;
-
-BSP_L1_SetupFreq_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die & '|' & MROClass, L1_BSP_SetupFrequency
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die & '|' & MROClass & '|' & MaterialDescription, L1_BSP_SetupHrsPerEvent
 RESIDENT BSP_Setup_L1;
 
 DROP TABLE BSP_Setup_L1;
@@ -1494,18 +1455,10 @@ BSP_L2_SetupHrsEv_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim & '|' & MROClass, L2_BSP_SetupHrsPerEvent
 RESIDENT BSP_Setup_L2;
 
-BSP_L2_SetupFreq_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim & '|' & MROClass, L2_BSP_SetupFrequency
-RESIDENT BSP_Setup_L2;
-
 DROP TABLE BSP_Setup_L2;
 
 BSP_L3_SetupHrsEv_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & MROClass, L3_BSP_SetupHrsPerEvent
-RESIDENT BSP_Setup_L3;
-
-BSP_L3_SetupFreq_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & MROClass, L3_BSP_SetupFrequency
 RESIDENT BSP_Setup_L3;
 
 DROP TABLE BSP_Setup_L3;
@@ -1548,101 +1501,64 @@ DROP TABLE BSP_ScrapReason_L3;
 
 
 // ============================================================
-// SECTION 29C: FEEDER TRIPS BSP MAPPING TABLES
-// Key formats mirror Reason BSP maps:
-//   L1 : Plant|WCObjectID|Die
-//   L2 : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|L2_ExtraDim
-//   L3 : Plant|WCObjectID
+// SECTION 29C: AVG BLANKET WASH TIME BSP MAPPING TABLES
 // ============================================================
 
-BSP_L1_FeederDTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_FeederDTPct
-RESIDENT BSP_Feeder_L1;
+BSP_L1_BlanketWashTime_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_BlanketWashTime
+RESIDENT BSP_BlanketWashTime_L1;
+DROP TABLE BSP_BlanketWashTime_L1;
 
-BSP_L1_FeederCntRate_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_FeederCntRate
-RESIDENT BSP_Feeder_L1;
+BSP_L2_BlanketWashTime_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_BlanketWashTime
+RESIDENT BSP_BlanketWashTime_L2;
+DROP TABLE BSP_BlanketWashTime_L2;
 
-BSP_L1_FeederPer10K_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_FeederPer10K
-RESIDENT BSP_Feeder_L1;
-
-DROP TABLE BSP_Feeder_L1;
-
-BSP_L2_FeederDTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_FeederDTPct
-RESIDENT BSP_Feeder_L2;
-
-BSP_L2_FeederCntRate_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_FeederCntRate
-RESIDENT BSP_Feeder_L2;
-
-BSP_L2_FeederPer10K_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_FeederPer10K
-RESIDENT BSP_Feeder_L2;
-
-DROP TABLE BSP_Feeder_L2;
-
-BSP_L3_FeederDTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_FeederDTPct
-RESIDENT BSP_Feeder_L3;
-
-BSP_L3_FeederCntRate_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_FeederCntRate
-RESIDENT BSP_Feeder_L3;
-
-BSP_L3_FeederPer10K_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_FeederPer10K
-RESIDENT BSP_Feeder_L3;
-
-DROP TABLE BSP_Feeder_L3;
+BSP_L3_BlanketWashTime_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_BlanketWashTime
+RESIDENT BSP_BlanketWashTime_L3;
+DROP TABLE BSP_BlanketWashTime_L3;
 
 
 // ============================================================
-// SECTION 29D: BLANKET WASHES BSP MAPPING TABLES
+// SECTION 29D: AVG FEEDER TRIP TIME BSP MAPPING TABLES
 // ============================================================
 
-BSP_L1_BlanketDTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_BlanketDTPct
-RESIDENT BSP_Blanket_L1;
+BSP_L1_FeederTripTime_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_FeederTripTime
+RESIDENT BSP_FeederTripTime_L1;
+DROP TABLE BSP_FeederTripTime_L1;
 
-BSP_L1_BlanketCntRate_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_BlanketCntRate
-RESIDENT BSP_Blanket_L1;
+BSP_L2_FeederTripTime_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_FeederTripTime
+RESIDENT BSP_FeederTripTime_L2;
+DROP TABLE BSP_FeederTripTime_L2;
 
-BSP_L1_BlanketPer10K_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die, L1_BSP_BlanketPer10K
-RESIDENT BSP_Blanket_L1;
+BSP_L3_FeederTripTime_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_FeederTripTime
+RESIDENT BSP_FeederTripTime_L3;
+DROP TABLE BSP_FeederTripTime_L3;
 
-DROP TABLE BSP_Blanket_L1;
 
-BSP_L2_BlanketDTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_BlanketDTPct
-RESIDENT BSP_Blanket_L2;
+// ============================================================
+// SECTION 29E: ARQ BSP MAPPING TABLES
+// L1 key includes MaterialDescription for finer-grain BSP
+// ============================================================
 
-BSP_L2_BlanketCntRate_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_BlanketCntRate
-RESIDENT BSP_Blanket_L2;
+BSP_L1_ARQ_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die & '|' & MaterialDescription, L1_BSP_ARQ
+RESIDENT BSP_ARQ_L1;
+DROP TABLE BSP_ARQ_L1;
 
-BSP_L2_BlanketPer10K_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_BlanketPer10K
-RESIDENT BSP_Blanket_L2;
+BSP_L2_ARQ_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_ARQ
+RESIDENT BSP_ARQ_L2;
+DROP TABLE BSP_ARQ_L2;
 
-DROP TABLE BSP_Blanket_L2;
-
-BSP_L3_BlanketDTPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_BlanketDTPct
-RESIDENT BSP_Blanket_L3;
-
-BSP_L3_BlanketCntRate_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_BlanketCntRate
-RESIDENT BSP_Blanket_L3;
-
-BSP_L3_BlanketPer10K_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_BlanketPer10K
-RESIDENT BSP_Blanket_L3;
-
-DROP TABLE BSP_Blanket_L3;
+BSP_L3_ARQ_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_ARQ
+RESIDENT BSP_ARQ_L3;
+DROP TABLE BSP_ARQ_L3;
 
 
 // ============================================================
@@ -1664,6 +1580,7 @@ LOAD
     Max("Board Type Group")                                                                     as "Board Type Group",
     Max("Board Caliper")                                                                        as "Board Caliper",
     Max(MROClass)                                                                               as MROClass,
+    Only(MaterialDescription)                                                                   as MaterialDescription,
     Sum(SchedHours)                                                                             as Wk_Die_SchedHours,
     Sum(GoodQty_OEE)                                                                            as Wk_Die_GoodQty,
     Sum(TotalQty_OEE)                                                                           as Wk_Die_TotalQty,
@@ -1700,6 +1617,7 @@ LOAD
     "Board Type Group",
     "Board Caliper",
     MROClass,
+    MaterialDescription,
     Wk_Die_SchedHours,
     Wk_Die_OEE_Denom,
     Wk_Die_Perf_Denom,
@@ -1730,13 +1648,6 @@ LOAD
         ApplyMap('BSP_L3_Speed_Map',    Plant & '|' & [WC Object ID], Null()))                  as Die_BSP_Speed,
 
     Coalesce(
-        ApplyMap('BSP_L1_NetThroughput_Map', Plant & '|' & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_NetThroughput_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
-            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
-                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
-        ApplyMap('BSP_L3_NetThroughput_Map', Plant & '|' & [WC Object ID], Null()))               as Die_BSP_NetThroughput,
-
-    Coalesce(
         ApplyMap('BSP_L1_DTPct_Map',    Plant & '|' & [WC Object ID] & '|' & Die, Null()),
         ApplyMap('BSP_L2_DTPct_Map',    Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
             If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
@@ -1758,18 +1669,32 @@ LOAD
         ApplyMap('BSP_L3_ScrapRate_Map',Plant & '|' & [WC Object ID], Null()))                  as Die_BSP_ScrapRate,
 
     Coalesce(
-        ApplyMap('BSP_L1_SetupHrsEv_Map',Plant & '|' & [WC Object ID] & '|' & Die & '|' & MROClass, Null()),
+        ApplyMap('BSP_L1_SetupHrsEv_Map',Plant & '|' & [WC Object ID] & '|' & Die & '|' & MROClass & '|' & MaterialDescription, Null()),
         ApplyMap('BSP_L2_SetupHrsEv_Map',Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
             If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
                 If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')) & '|' & MROClass, Null()),
         ApplyMap('BSP_L3_SetupHrsEv_Map',Plant & '|' & [WC Object ID] & '|' & MROClass, Null())) as Die_BSP_SetupHrsPerEvent,
 
     Coalesce(
-        ApplyMap('BSP_L1_SetupFreq_Map', Plant & '|' & [WC Object ID] & '|' & Die & '|' & MROClass, Null()),
-        ApplyMap('BSP_L2_SetupFreq_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+        ApplyMap('BSP_L1_BlanketWashTime_Map', Plant & '|' & [WC Object ID] & '|' & Die, Null()),
+        ApplyMap('BSP_L2_BlanketWashTime_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
             If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
-                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')) & '|' & MROClass, Null()),
-        ApplyMap('BSP_L3_SetupFreq_Map', Plant & '|' & [WC Object ID] & '|' & MROClass, Null()))  as Die_BSP_SetupFrequency,
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
+        ApplyMap('BSP_L3_BlanketWashTime_Map', Plant & '|' & [WC Object ID], Null()))             as Die_BSP_BlanketWashTime,
+
+    Coalesce(
+        ApplyMap('BSP_L1_FeederTripTime_Map',  Plant & '|' & [WC Object ID] & '|' & Die, Null()),
+        ApplyMap('BSP_L2_FeederTripTime_Map',  Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
+        ApplyMap('BSP_L3_FeederTripTime_Map',  Plant & '|' & [WC Object ID], Null()))             as Die_BSP_FeederTripTime,
+
+    Coalesce(
+        ApplyMap('BSP_L1_ARQ_Map', Plant & '|' & [WC Object ID] & '|' & Die & '|' & MaterialDescription, Null()),
+        ApplyMap('BSP_L2_ARQ_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
+            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
+                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
+        ApplyMap('BSP_L3_ARQ_Map', Plant & '|' & [WC Object ID], Null()))                         as Die_BSP_ARQ,
 
     // Confidence level for OEE used as proxy for all main KPIs
     // 3 = HIGH (L1 resolved), 2 = MEDIUM (L2), 1 = LOW (L3), 0 = NONE
@@ -1819,17 +1744,17 @@ DROP MAPPING TABLE BSP_L3_DTHrs_Map;
 DROP MAPPING TABLE BSP_L3_ScrapRate_Map;
 DROP MAPPING TABLE BSP_L3_RunCount_Map;
 DROP MAPPING TABLE BSP_L1_SetupHrsEv_Map;
-DROP MAPPING TABLE BSP_L1_SetupFreq_Map;
 DROP MAPPING TABLE BSP_L2_SetupHrsEv_Map;
-DROP MAPPING TABLE BSP_L2_SetupFreq_Map;
 DROP MAPPING TABLE BSP_L3_SetupHrsEv_Map;
-DROP MAPPING TABLE BSP_L3_SetupFreq_Map;
-// DROP MAPPING TABLE BSP_L1_DwnRsn_Map;
-// DROP MAPPING TABLE BSP_L2_DwnRsn_Map;
-// DROP MAPPING TABLE BSP_L3_DwnRsn_Map;
-// DROP MAPPING TABLE BSP_L1_ScrRsn_Map;
-// DROP MAPPING TABLE BSP_L2_ScrRsn_Map;
-// DROP MAPPING TABLE BSP_L3_ScrRsn_Map;
+DROP MAPPING TABLE BSP_L1_BlanketWashTime_Map;
+DROP MAPPING TABLE BSP_L2_BlanketWashTime_Map;
+DROP MAPPING TABLE BSP_L3_BlanketWashTime_Map;
+DROP MAPPING TABLE BSP_L1_FeederTripTime_Map;
+DROP MAPPING TABLE BSP_L2_FeederTripTime_Map;
+DROP MAPPING TABLE BSP_L3_FeederTripTime_Map;
+DROP MAPPING TABLE BSP_L1_ARQ_Map;
+DROP MAPPING TABLE BSP_L2_ARQ_Map;
+DROP MAPPING TABLE BSP_L3_ARQ_Map;
 
 
 // ============================================================
@@ -1859,10 +1784,6 @@ LOAD
         Sum(If(Not IsNull(Die_BSP_Speed),         Wk_Die_SchedHours * Die_BSP_Speed, 0)) /
         Sum(If(Not IsNull(Die_BSP_Speed),         Wk_Die_SchedHours, 0)), Null())              as Wk_BSP_Speed,
 
-    If(Sum(If(Not IsNull(Die_BSP_NetThroughput), Wk_Die_SchedHours, 0)) > 0,
-        Sum(If(Not IsNull(Die_BSP_NetThroughput), Wk_Die_SchedHours * Die_BSP_NetThroughput, 0)) /
-        Sum(If(Not IsNull(Die_BSP_NetThroughput), Wk_Die_SchedHours, 0)), Null())              as Wk_BSP_NetThroughput,
-
     If(Sum(If(Not IsNull(Die_BSP_DowntimePct),   Wk_Die_SchedHours, 0)) > 0,
         Sum(If(Not IsNull(Die_BSP_DowntimePct),   Wk_Die_SchedHours * Die_BSP_DowntimePct, 0)) /
         Sum(If(Not IsNull(Die_BSP_DowntimePct),   Wk_Die_SchedHours, 0)), Null())              as Wk_BSP_DowntimePct,
@@ -1879,9 +1800,17 @@ LOAD
         Sum(If(Not IsNull(Die_BSP_SetupHrsPerEvent), Wk_Die_SchedHours * Die_BSP_SetupHrsPerEvent, 0)) /
         Sum(If(Not IsNull(Die_BSP_SetupHrsPerEvent), Wk_Die_SchedHours, 0)), Null())           as Wk_BSP_SetupHrsPerEvent,
 
-    If(Sum(If(Not IsNull(Die_BSP_SetupFrequency), Wk_Die_SchedHours, 0)) > 0,
-        Sum(If(Not IsNull(Die_BSP_SetupFrequency), Wk_Die_SchedHours * Die_BSP_SetupFrequency, 0)) /
-        Sum(If(Not IsNull(Die_BSP_SetupFrequency), Wk_Die_SchedHours, 0)), Null())             as Wk_BSP_SetupFrequency,
+    If(Sum(If(Not IsNull(Die_BSP_BlanketWashTime), Wk_Die_SchedHours, 0)) > 0,
+        Sum(If(Not IsNull(Die_BSP_BlanketWashTime), Wk_Die_SchedHours * Die_BSP_BlanketWashTime, 0)) /
+        Sum(If(Not IsNull(Die_BSP_BlanketWashTime), Wk_Die_SchedHours, 0)), Null())            as Wk_BSP_BlanketWashTime,
+
+    If(Sum(If(Not IsNull(Die_BSP_FeederTripTime),  Wk_Die_SchedHours, 0)) > 0,
+        Sum(If(Not IsNull(Die_BSP_FeederTripTime),  Wk_Die_SchedHours * Die_BSP_FeederTripTime, 0)) /
+        Sum(If(Not IsNull(Die_BSP_FeederTripTime),  Wk_Die_SchedHours, 0)), Null())            as Wk_BSP_FeederTripTime,
+
+    If(Sum(If(Not IsNull(Die_BSP_ARQ),             Wk_Die_SchedHours, 0)) > 0,
+        Sum(If(Not IsNull(Die_BSP_ARQ),             Wk_Die_SchedHours * Die_BSP_ARQ, 0)) /
+        Sum(If(Not IsNull(Die_BSP_ARQ),             Wk_Die_SchedHours, 0)), Null())            as Wk_BSP_ARQ,
 
     // Coverage-weighted confidence score across all dies in week
     If(Sum(Wk_Die_SchedHours) > 0,
@@ -1924,12 +1853,15 @@ LOAD
     If(Sum(Perf_Denom)   > 0, Sum(TotalQty_OEE) / Sum(Perf_Denom),   Null())                   as Wk_Performance,
     If(Sum(TotalQty_OEE) > 0, Sum(GoodQty_OEE)  / Sum(TotalQty_OEE), Null())                   as Wk_Quality,
     If(Sum(RunHours)     > 0, Sum(TotalQty_OEE) / Sum(RunHours),      Null())                   as Wk_Speed,
-    If(Sum(RunHours) + Sum(DownHours) > 0, Sum(GoodQty_OEE) / (Sum(RunHours) + Sum(DownHours)), Null()) as Wk_NetThroughput,
     If(Sum(SchedHours)   > 0, Sum(DownHours)     / Sum(SchedHours),   Null())                   as Wk_DowntimePct,
     Sum(DownHours)                                                                               as Wk_DowntimeHrs,
     If(Sum(TotalQty_OEE) > 0, Sum(ScrapQty_OEE) / Sum(TotalQty_OEE), Null())                   as Wk_ScrapRate,
     If(Sum(SetupCount)   > 0, Sum(SetupHours)    / Sum(SetupCount),   Null())                   as Wk_SetupHrsPerEvent,
-    If(Sum(SchedHours)   > 0, Sum(SetupCount)    / Sum(SchedHours),   Null())                   as Wk_SetupFrequency,
+    If(Sum(BlanketWashEvents) > 0, Sum(BlanketWashHours) / Sum(BlanketWashEvents), Null())       as Wk_BlanketWashTime,
+    If(Sum(FeederTripEvents)  > 0, Sum(FeederTripHours)  / Sum(FeederTripEvents),  Null())       as Wk_FeederTripTime,
+    If(Sum(SetupCount)   > 0, Sum(TotalQty_OEE)  / Sum(SetupCount),  Null())                    as Wk_ARQ,
+    Sum(BlanketWashEvents)                                                                       as Wk_BlanketWashEvents,
+    Sum(FeederTripEvents)                                                                        as Wk_FeederTripEvents,
     Max(MaxSpeed)                                                                               as Wk_MaxSpeed
 RESIDENT JobFact_Scoring
 GROUP BY WeekStart(Date, 0, $(vWeekStartDay)), Plant, "WC Object ID";
@@ -1973,15 +1905,18 @@ LOAD
     "WC Object ID",
     Wk_OEE,
     Wk_Speed,
-    Wk_NetThroughput,
     Wk_DowntimePct,
     Wk_DowntimeHrs,
     Wk_ScrapRate,
     Wk_SetupHrsPerEvent,
-    Wk_SetupFrequency,
+    Wk_BlanketWashTime,
+    Wk_FeederTripTime,
+    Wk_ARQ,
     Wk_SchedHours,
     Wk_RunHours,
     Wk_SetupCount,
+    Wk_BlanketWashEvents,
+    Wk_FeederTripEvents,
     Wk_MaxSpeed,
 
     // Higher is better — lower = deterioration
@@ -1996,9 +1931,9 @@ LOAD
         Peek('Streak_Speed') + 1, 0)                                                            as Streak_Speed,
 
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID')
-        AND Not IsNull(Wk_NetThroughput) AND Not IsNull(Peek('Wk_NetThroughput'))
-        AND Wk_NetThroughput < Peek('Wk_NetThroughput'),
-        Peek('Streak_NetThroughput') + 1, 0)                                                    as Streak_NetThroughput,
+        AND Not IsNull(Wk_ARQ) AND Not IsNull(Peek('Wk_ARQ'))
+        AND Wk_ARQ < Peek('Wk_ARQ'),
+        Peek('Streak_ARQ') + 1, 0)                                                              as Streak_ARQ,
 
     // Lower is better — higher = deterioration
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID')
@@ -2022,9 +1957,14 @@ LOAD
         Peek('Streak_SetupHrsPerEvent') + 1, 0)                                                 as Streak_SetupHrsPerEvent,
 
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID')
-        AND Not IsNull(Wk_SetupFrequency) AND Not IsNull(Peek('Wk_SetupFrequency'))
-        AND Wk_SetupFrequency > Peek('Wk_SetupFrequency'),
-        Peek('Streak_SetupFrequency') + 1, 0)                                                   as Streak_SetupFrequency
+        AND Not IsNull(Wk_BlanketWashTime) AND Not IsNull(Peek('Wk_BlanketWashTime'))
+        AND Wk_BlanketWashTime > Peek('Wk_BlanketWashTime'),
+        Peek('Streak_BlanketWashTime') + 1, 0)                                                  as Streak_BlanketWashTime,
+
+    If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID')
+        AND Not IsNull(Wk_FeederTripTime) AND Not IsNull(Peek('Wk_FeederTripTime'))
+        AND Wk_FeederTripTime > Peek('Wk_FeederTripTime'),
+        Peek('Streak_FeederTripTime') + 1, 0)                                                   as Streak_FeederTripTime
 
 RESIDENT WeeklyMachineKPI_Sorted;
 
@@ -2044,24 +1984,28 @@ LOAD
     WeekStart,
     Wk_OEE,
     Wk_Speed,
-    Wk_NetThroughput,
     Wk_DowntimePct,
     Wk_DowntimeHrs,
     Wk_ScrapRate,
     Wk_SetupHrsPerEvent,
-    Wk_SetupFrequency,
+    Wk_BlanketWashTime,
+    Wk_FeederTripTime,
+    Wk_ARQ,
     Wk_SchedHours,
     Wk_RunHours,
     Wk_SetupCount,
+    Wk_BlanketWashEvents,
+    Wk_FeederTripEvents,
     Wk_MaxSpeed,
     Streak_OEE,
     Streak_Speed,
-    Streak_NetThroughput,
+    Streak_ARQ,
     Streak_DowntimePct,
     Streak_DowntimeHrs,
     Streak_ScrapRate,
     Streak_SetupHrsPerEvent,
-    Streak_SetupFrequency
+    Streak_BlanketWashTime,
+    Streak_FeederTripTime
 RESIDENT WeeklyMachineTrend;
 
 DROP TABLE WeeklyMachineTrend;
@@ -2081,32 +2025,37 @@ LOAD
     "WC Object ID",
     Avg(Wk_BSP_OEE)                                                                             as Cur_BSP_OEE,
     Avg(Wk_BSP_Speed)                                                                           as Cur_BSP_Speed,
-    Avg(Wk_BSP_NetThroughput)                                                                   as Cur_BSP_NetThroughput,
     Avg(Wk_BSP_DowntimePct)                                                                     as Cur_BSP_DowntimePct,
     Avg(Wk_BSP_DowntimeHrs)                                                                     as Cur_BSP_DowntimeHrs,
     Avg(Wk_BSP_ScrapRate)                                                                       as Cur_BSP_ScrapRate,
     Avg(Wk_BSP_SetupHrsPerEvent)                                                                as Cur_BSP_SetupHrsPerEvent,
-    Avg(Wk_BSP_SetupFrequency)                                                                  as Cur_BSP_SetupFrequency,
+    Avg(Wk_BSP_BlanketWashTime)                                                                 as Cur_BSP_BlanketWashTime,
+    Avg(Wk_BSP_FeederTripTime)                                                                  as Cur_BSP_FeederTripTime,
+    Avg(Wk_BSP_ARQ)                                                                             as Cur_BSP_ARQ,
     Avg(Wk_OEE)                                                                                 as Cur_OEE,
     Avg(Wk_Speed)                                                                               as Cur_Speed,
-    Avg(Wk_NetThroughput)                                                                       as Cur_NetThroughput,
     Avg(Wk_DowntimePct)                                                                         as Cur_DowntimePct,
     Avg(Wk_DowntimeHrs)                                                                         as Cur_DowntimeHrs,
     Avg(Wk_ScrapRate)                                                                           as Cur_ScrapRate,
     Avg(Wk_SetupHrsPerEvent)                                                                    as Cur_SetupHrsPerEvent,
+    Avg(Wk_BlanketWashTime)                                                                     as Cur_BlanketWashTime,
+    Avg(Wk_FeederTripTime)                                                                      as Cur_FeederTripTime,
+    Avg(Wk_ARQ)                                                                                 as Cur_ARQ,
+    Sum(Wk_BlanketWashEvents)                                                                   as Cur_BlanketWashEvents,
+    Sum(Wk_FeederTripEvents)                                                                    as Cur_FeederTripEvents,
     Sum(Wk_SchedHours)                                                                          as Cur_SchedHours,
     Sum(Wk_RunHours)                                                                            as Cur_RunHours,
     Sum(Wk_SetupCount)                                                                          as Cur_SetupEventCount,
-    If(Sum(Wk_SchedHours) > 0, Sum(Wk_SetupCount) / Sum(Wk_SchedHours), Null())               as Cur_SetupFrequency,
     Max(If(WeekStart = $(vLastWeekStart), Wk_MaxSpeed,             Null()))                     as Cur_MaxSpeed,
     Max(If(WeekStart = $(vLastWeekStart), Streak_OEE,              Null()))                     as Streak_OEE,
     Max(If(WeekStart = $(vLastWeekStart), Streak_Speed,            Null()))                     as Streak_Speed,
-    Max(If(WeekStart = $(vLastWeekStart), Streak_NetThroughput,    Null()))                     as Streak_NetThroughput,
+    Max(If(WeekStart = $(vLastWeekStart), Streak_ARQ,              Null()))                     as Streak_ARQ,
     Max(If(WeekStart = $(vLastWeekStart), Streak_DowntimePct,      Null()))                     as Streak_DowntimePct,
     Max(If(WeekStart = $(vLastWeekStart), Streak_DowntimeHrs,      Null()))                     as Streak_DowntimeHrs,
     Max(If(WeekStart = $(vLastWeekStart), Streak_ScrapRate,        Null()))                     as Streak_ScrapRate,
     Max(If(WeekStart = $(vLastWeekStart), Streak_SetupHrsPerEvent, Null()))                     as Streak_SetupHrsPerEvent,
-    Max(If(WeekStart = $(vLastWeekStart), Streak_SetupFrequency,   Null()))                     as Streak_SetupFrequency,
+    Max(If(WeekStart = $(vLastWeekStart), Streak_BlanketWashTime,  Null()))                     as Streak_BlanketWashTime,
+    Max(If(WeekStart = $(vLastWeekStart), Streak_FeederTripTime,   Null()))                     as Streak_FeederTripTime,
     If(Sum(Wk_TotalSchedHours) > 0,
         Sum(Wk_CoveredSchedHours) / Sum(Wk_TotalSchedHours), 0)                                as Cur_BSP_CoveragePct,
     Max(If(WeekStart = $(vLastWeekStart), BSP_ConfScore,           Null()))                     as Cur_BSP_ConfScore,
@@ -2436,253 +2385,6 @@ DROP MAPPING TABLE BSP_L3_ScrRsn_Map;
 
 
 // ============================================================
-// SECTION 40B: CURRENT PERIOD — FEEDER TRIPS AGGREGATION
-// Three metrics per machine: DTPct, CntRate, Per10K
-// Die-level → 3-level BSP Coalesce → roll up to machine grain
-// Weighted by Die_SchedHrs_2wk (same pattern as Sections 40-41)
-// ============================================================
-
-CurPeriod_FeederDie_Raw:
-NoConcatenate
-LOAD
-    "WC Object ID",
-    Die,
-    "Plant Material Key"                                                                          as PltMatKey,
-    Only("Carton Style")                                                                          as CartonStyle,
-    Max(ApplyMap('OrderOp_NumberUp_Map', "Order Operation Key", Null()))                          as NumberUp,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                               as Cur_FeederDownHours,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count", 0))                                as Cur_FeederDownCount,
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1,
-        "Yield in OEE UOM" + "Scrap in OEE UOM", 0))                                             as Cur_TotalQty_OEE
-FROM [$(vFactQVD)]
-(qvd)
-WHERE Date >= $(v2WeekStart) AND Date < $(vCurrentWeekStart)
-GROUP BY "WC Object ID", Die, "Plant Material Key";
-
-CurPeriod_FeederDie:
-NoConcatenate
-LOAD
-    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')                                       as Plant,
-    "WC Object ID",
-    Cur_FeederDownHours,
-    Cur_FeederDownCount,
-    Cur_TotalQty_OEE,
-    ApplyMap('DieSchedHrs_Rsn_Map',
-        ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
-        & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey, 0)                                 as Die_SchedHrs_2wk,
-    Coalesce(
-        ApplyMap('BSP_L1_FeederDTPct_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_FeederDTPct_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|'
-            & ApplyMap('BoardTypeGroup_Rsn_Map', ApplyMap('BoardType_Rsn_Map', PltMatKey, Null()), Null()) & '|'
-            & ApplyMap('BoardCaliper_Rsn_Map',   ApplyMap('Material_Rsn_Map',  PltMatKey, Null()), Null()) & '|'
-            & If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
-                    Text(CartonStyle),
-                If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
-                    Text(NumberUp), '')), Null()),
-        ApplyMap('BSP_L3_FeederDTPct_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID], Null())
-    )                                                                                             as Feeder_BSP_DTPct,
-    Coalesce(
-        ApplyMap('BSP_L1_FeederCntRate_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_FeederCntRate_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|'
-            & ApplyMap('BoardTypeGroup_Rsn_Map', ApplyMap('BoardType_Rsn_Map', PltMatKey, Null()), Null()) & '|'
-            & ApplyMap('BoardCaliper_Rsn_Map',   ApplyMap('Material_Rsn_Map',  PltMatKey, Null()), Null()) & '|'
-            & If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
-                    Text(CartonStyle),
-                If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
-                    Text(NumberUp), '')), Null()),
-        ApplyMap('BSP_L3_FeederCntRate_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID], Null())
-    )                                                                                             as Feeder_BSP_CntRate,
-    Coalesce(
-        ApplyMap('BSP_L1_FeederPer10K_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_FeederPer10K_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|'
-            & ApplyMap('BoardTypeGroup_Rsn_Map', ApplyMap('BoardType_Rsn_Map', PltMatKey, Null()), Null()) & '|'
-            & ApplyMap('BoardCaliper_Rsn_Map',   ApplyMap('Material_Rsn_Map',  PltMatKey, Null()), Null()) & '|'
-            & If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
-                    Text(CartonStyle),
-                If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
-                    Text(NumberUp), '')), Null()),
-        ApplyMap('BSP_L3_FeederPer10K_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID], Null())
-    )                                                                                             as Feeder_BSP_Per10K
-RESIDENT CurPeriod_FeederDie_Raw;
-
-DROP TABLE CurPeriod_FeederDie_Raw;
-
-CurPeriod_Feeder:
-NoConcatenate
-LOAD
-    Plant,
-    "WC Object ID",
-    Sum(Cur_FeederDownHours)                                                                      as Cur_FeederDownHours,
-    Sum(Cur_FeederDownCount)                                                                      as Cur_FeederDownCount,
-    Sum(Cur_TotalQty_OEE)                                                                         as Cur_FeederTotalQty,
-    ApplyMap('TotalSchedHrs_Rsn_Map', Plant & '|' & [WC Object ID], Null())                       as TotalSchedHrs_2wk,
-    If(Sum(If(Not IsNull(Feeder_BSP_DTPct), Die_SchedHrs_2wk, 0)) > 0,
-        Sum(If(Not IsNull(Feeder_BSP_DTPct), Die_SchedHrs_2wk * Feeder_BSP_DTPct, 0)) /
-        Sum(If(Not IsNull(Feeder_BSP_DTPct), Die_SchedHrs_2wk, 0)), Null())                       as Feeder_BSP_DTPct,
-    If(Sum(If(Not IsNull(Feeder_BSP_CntRate), Die_SchedHrs_2wk, 0)) > 0,
-        Sum(If(Not IsNull(Feeder_BSP_CntRate), Die_SchedHrs_2wk * Feeder_BSP_CntRate, 0)) /
-        Sum(If(Not IsNull(Feeder_BSP_CntRate), Die_SchedHrs_2wk, 0)), Null())                     as Feeder_BSP_CntRate,
-    If(Sum(If(Not IsNull(Feeder_BSP_Per10K), Die_SchedHrs_2wk, 0)) > 0,
-        Sum(If(Not IsNull(Feeder_BSP_Per10K), Die_SchedHrs_2wk * Feeder_BSP_Per10K, 0)) /
-        Sum(If(Not IsNull(Feeder_BSP_Per10K), Die_SchedHrs_2wk, 0)), Null())                      as Feeder_BSP_Per10K
-RESIDENT CurPeriod_FeederDie
-GROUP BY Plant, "WC Object ID";
-
-DROP TABLE CurPeriod_FeederDie;
-DROP MAPPING TABLE BSP_L1_FeederDTPct_Map;
-DROP MAPPING TABLE BSP_L2_FeederDTPct_Map;
-DROP MAPPING TABLE BSP_L3_FeederDTPct_Map;
-DROP MAPPING TABLE BSP_L1_FeederCntRate_Map;
-DROP MAPPING TABLE BSP_L2_FeederCntRate_Map;
-DROP MAPPING TABLE BSP_L3_FeederCntRate_Map;
-DROP MAPPING TABLE BSP_L1_FeederPer10K_Map;
-DROP MAPPING TABLE BSP_L2_FeederPer10K_Map;
-DROP MAPPING TABLE BSP_L3_FeederPer10K_Map;
-
-
-// ============================================================
-// SECTION 40C: CURRENT PERIOD — BLANKET WASHES AGGREGATION
-// ============================================================
-
-CurPeriod_BlanketDie_Raw:
-NoConcatenate
-LOAD
-    "WC Object ID",
-    Die,
-    "Plant Material Key"                                                                          as PltMatKey,
-    Only("Carton Style")                                                                          as CartonStyle,
-    Max(ApplyMap('OrderOp_NumberUp_Map', "Order Operation Key", Null()))                          as NumberUp,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                               as Cur_BlanketDownHours,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count", 0))                                as Cur_BlanketDownCount,
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1,
-        "Yield in OEE UOM" + "Scrap in OEE UOM", 0))                                             as Cur_BlanketTotalQty_OEE
-FROM [$(vFactQVD)]
-(qvd)
-WHERE Date >= $(v2WeekStart) AND Date < $(vCurrentWeekStart)
-GROUP BY "WC Object ID", Die, "Plant Material Key";
-
-CurPeriod_BlanketDie:
-NoConcatenate
-LOAD
-    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')                                       as Plant,
-    "WC Object ID",
-    Cur_BlanketDownHours,
-    Cur_BlanketDownCount,
-    Cur_BlanketTotalQty_OEE,
-    ApplyMap('DieSchedHrs_Rsn_Map',
-        ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
-        & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey, 0)                                 as Die_SchedHrs_2wk,
-    Coalesce(
-        ApplyMap('BSP_L1_BlanketDTPct_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_BlanketDTPct_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|'
-            & ApplyMap('BoardTypeGroup_Rsn_Map', ApplyMap('BoardType_Rsn_Map', PltMatKey, Null()), Null()) & '|'
-            & ApplyMap('BoardCaliper_Rsn_Map',   ApplyMap('Material_Rsn_Map',  PltMatKey, Null()), Null()) & '|'
-            & If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
-                    Text(CartonStyle),
-                If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
-                    Text(NumberUp), '')), Null()),
-        ApplyMap('BSP_L3_BlanketDTPct_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID], Null())
-    )                                                                                             as Blanket_BSP_DTPct,
-    Coalesce(
-        ApplyMap('BSP_L1_BlanketCntRate_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_BlanketCntRate_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|'
-            & ApplyMap('BoardTypeGroup_Rsn_Map', ApplyMap('BoardType_Rsn_Map', PltMatKey, Null()), Null()) & '|'
-            & ApplyMap('BoardCaliper_Rsn_Map',   ApplyMap('Material_Rsn_Map',  PltMatKey, Null()), Null()) & '|'
-            & If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
-                    Text(CartonStyle),
-                If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
-                    Text(NumberUp), '')), Null()),
-        ApplyMap('BSP_L3_BlanketCntRate_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID], Null())
-    )                                                                                             as Blanket_BSP_CntRate,
-    Coalesce(
-        ApplyMap('BSP_L1_BlanketPer10K_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|' & Die, Null()),
-        ApplyMap('BSP_L2_BlanketPer10K_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|'
-            & ApplyMap('BoardTypeGroup_Rsn_Map', ApplyMap('BoardType_Rsn_Map', PltMatKey, Null()), Null()) & '|'
-            & ApplyMap('BoardCaliper_Rsn_Map',   ApplyMap('Material_Rsn_Map',  PltMatKey, Null()), Null()) & '|'
-            & If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
-                    Text(CartonStyle),
-                If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
-                    Text(NumberUp), '')), Null()),
-        ApplyMap('BSP_L3_BlanketPer10K_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID], Null())
-    )                                                                                             as Blanket_BSP_Per10K
-RESIDENT CurPeriod_BlanketDie_Raw;
-
-DROP TABLE CurPeriod_BlanketDie_Raw;
-
-CurPeriod_Blanket:
-NoConcatenate
-LOAD
-    Plant,
-    "WC Object ID",
-    Sum(Cur_BlanketDownHours)                                                                     as Cur_BlanketDownHours,
-    Sum(Cur_BlanketDownCount)                                                                     as Cur_BlanketDownCount,
-    Sum(Cur_BlanketTotalQty_OEE)                                                                  as Cur_BlanketTotalQty,
-    ApplyMap('TotalSchedHrs_Rsn_Map', Plant & '|' & [WC Object ID], Null())                       as TotalSchedHrs_2wk,
-    If(Sum(If(Not IsNull(Blanket_BSP_DTPct), Die_SchedHrs_2wk, 0)) > 0,
-        Sum(If(Not IsNull(Blanket_BSP_DTPct), Die_SchedHrs_2wk * Blanket_BSP_DTPct, 0)) /
-        Sum(If(Not IsNull(Blanket_BSP_DTPct), Die_SchedHrs_2wk, 0)), Null())                      as Blanket_BSP_DTPct,
-    If(Sum(If(Not IsNull(Blanket_BSP_CntRate), Die_SchedHrs_2wk, 0)) > 0,
-        Sum(If(Not IsNull(Blanket_BSP_CntRate), Die_SchedHrs_2wk * Blanket_BSP_CntRate, 0)) /
-        Sum(If(Not IsNull(Blanket_BSP_CntRate), Die_SchedHrs_2wk, 0)), Null())                    as Blanket_BSP_CntRate,
-    If(Sum(If(Not IsNull(Blanket_BSP_Per10K), Die_SchedHrs_2wk, 0)) > 0,
-        Sum(If(Not IsNull(Blanket_BSP_Per10K), Die_SchedHrs_2wk * Blanket_BSP_Per10K, 0)) /
-        Sum(If(Not IsNull(Blanket_BSP_Per10K), Die_SchedHrs_2wk, 0)), Null())                     as Blanket_BSP_Per10K
-RESIDENT CurPeriod_BlanketDie
-GROUP BY Plant, "WC Object ID";
-
-DROP TABLE CurPeriod_BlanketDie;
-DROP MAPPING TABLE BSP_L1_BlanketDTPct_Map;
-DROP MAPPING TABLE BSP_L2_BlanketDTPct_Map;
-DROP MAPPING TABLE BSP_L3_BlanketDTPct_Map;
-DROP MAPPING TABLE BSP_L1_BlanketCntRate_Map;
-DROP MAPPING TABLE BSP_L2_BlanketCntRate_Map;
-DROP MAPPING TABLE BSP_L3_BlanketCntRate_Map;
-DROP MAPPING TABLE BSP_L1_BlanketPer10K_Map;
-DROP MAPPING TABLE BSP_L2_BlanketPer10K_Map;
-DROP MAPPING TABLE BSP_L3_BlanketPer10K_Map;
-
-
-// ============================================================
 // SECTION 41B: 4-WEEK REASON STREAK
 // Per reason (Plant + WC + ReasonKey), counts how many of the
 // last 4 weeks the reason's weekly rate exceeded its 2-week
@@ -2930,37 +2632,6 @@ WHERE Not IsNull(Cur_BSP_Speed) AND Not IsNull(Cur_Speed)
 
 Concatenate (InsightRecords_Raw)
 LOAD
-    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|NETTHROUGHPUT' as Insight_ID,
-    Plant,
-    "WC Object ID",
-    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                       as "Plant - WC",
-    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
-    Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
-    'Net Throughput Rate'                                                                       as KPI_Name,
-    'Lever - OEE'                                                                               as KPI_Category,
-    Cur_NetThroughput                                                                           as Cur_Actual,
-    Cur_BSP_NetThroughput                                                                       as BSP_Benchmark,
-    Cur_NetThroughput                                                                           as Cur_Actual_Fmt,
-    Cur_BSP_NetThroughput                                                                       as BSP_Benchmark_Fmt,
-    (Cur_BSP_NetThroughput - Cur_NetThroughput) / Cur_BSP_NetThroughput * 100                  as Gap_Pct,
-    If(Cur_BSP_NetThroughput > 0,
-        (Cur_BSP_NetThroughput - Cur_NetThroughput) * (Cur_RunHours + Cur_DowntimeHrs), 0)                        as Sheet_Gap,
-    RangeMin(If(IsNull(Streak_NetThroughput), 0, Streak_NetThroughput), 4)                      as Streak_4wk,
-    Cur_SchedHours,
-    Cur_BSP_CoveragePct,
-    Cur_BSP_ConfScore,
-    Cur_BSP_PoolSize,
-    If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
-        If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
-            If(Cur_BSP_ConfScore >= 0.5, 'LOW',
-                'Insufficient History')))                                                        as BSP_Confidence
-RESIDENT CurrentPeriod
-WHERE Not IsNull(Cur_BSP_NetThroughput) AND Not IsNull(Cur_NetThroughput)
-    AND Cur_NetThroughput < Cur_BSP_NetThroughput
-    AND Cur_BSP_CoveragePct > $(vMinCoverage);
-
-Concatenate (InsightRecords_Raw)
-LOAD
     Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|DOWNTIMEPCT'   as Insight_ID,
     Plant,
     "WC Object ID",
@@ -3027,7 +2698,7 @@ LOAD
     ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                       as "Plant - WC",
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
-    'Setup Hrs/Event'                                                                           as KPI_Name,
+    'Avg MR Time'                                                                               as KPI_Name,
     'Lever - OEE'                                                                               as KPI_Category,
     Cur_SetupHrsPerEvent                                                                        as Cur_Actual,
     Cur_BSP_SetupHrsPerEvent                                                                    as BSP_Benchmark,
@@ -3051,22 +2722,21 @@ WHERE Not IsNull(Cur_BSP_SetupHrsPerEvent) AND Not IsNull(Cur_SetupHrsPerEvent)
 
 Concatenate (InsightRecords_Raw)
 LOAD
-    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|SETUPFREQ'     as Insight_ID,
+    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|ARQ'           as Insight_ID,
     Plant,
     "WC Object ID",
     ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                       as "Plant - WC",
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
-    'Setup Frequency'                                                                           as KPI_Name,
+    'ARQ'                                                                                       as KPI_Name,
     'Lever - OEE'                                                                               as KPI_Category,
-    Cur_SetupFrequency                                                                          as Cur_Actual,
-    Cur_BSP_SetupFrequency                                                                      as BSP_Benchmark,
-    Num(Cur_SetupFrequency,     '0.00')                                                         as Cur_Actual_Fmt,
-    Num(Cur_BSP_SetupFrequency, '0.00')                                                         as BSP_Benchmark_Fmt,
-    (Cur_SetupFrequency - Cur_BSP_SetupFrequency) / Cur_BSP_SetupFrequency * 100                as Gap_Pct,
-    (Cur_SetupFrequency - Cur_BSP_SetupFrequency)
-        * Cur_SchedHours * Cur_BSP_SetupHrsPerEvent * Cur_BSP_Speed                            as Sheet_Gap,
-    RangeMin(If(IsNull(Streak_SetupFrequency), 0, Streak_SetupFrequency), 4)                    as Streak_4wk,
+    Cur_ARQ                                                                                     as Cur_Actual,
+    Cur_BSP_ARQ                                                                                 as BSP_Benchmark,
+    Cur_ARQ                                                                                     as Cur_Actual_Fmt,
+    Cur_BSP_ARQ                                                                                 as BSP_Benchmark_Fmt,
+    If(Cur_BSP_ARQ > 0, (Cur_BSP_ARQ - Cur_ARQ) / Cur_BSP_ARQ * 100, 0)                        as Gap_Pct,
+    If(Cur_BSP_ARQ > 0, (Cur_BSP_ARQ - Cur_ARQ) * Cur_SetupEventCount, 0)                      as Sheet_Gap,
+    RangeMin(If(IsNull(Streak_ARQ), 0, Streak_ARQ), 4)                                          as Streak_4wk,
     Cur_SchedHours,
     Cur_BSP_CoveragePct,
     Cur_BSP_ConfScore,
@@ -3076,8 +2746,70 @@ LOAD
             If(Cur_BSP_ConfScore >= 0.5, 'LOW',
                 'Insufficient History')))                                                        as BSP_Confidence
 RESIDENT CurrentPeriod
-WHERE Not IsNull(Cur_BSP_SetupFrequency) AND Not IsNull(Cur_SetupFrequency)
-    AND Cur_SetupFrequency > Cur_BSP_SetupFrequency
+WHERE Not IsNull(Cur_BSP_ARQ) AND Not IsNull(Cur_ARQ)
+    AND Cur_ARQ < Cur_BSP_ARQ
+    AND Cur_BSP_CoveragePct > $(vMinCoverage);
+
+Concatenate (InsightRecords_Raw)
+LOAD
+    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|BWTTIME'       as Insight_ID,
+    Plant,
+    "WC Object ID",
+    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                       as "Plant - WC",
+    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
+    Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
+    'Avg Blanket Wash Time'                                                                     as KPI_Name,
+    'Lever - Downtime %'                                                                        as KPI_Category,
+    Cur_BlanketWashTime                                                                         as Cur_Actual,
+    Cur_BSP_BlanketWashTime                                                                     as BSP_Benchmark,
+    Cur_BlanketWashTime                                                                         as Cur_Actual_Fmt,
+    Cur_BSP_BlanketWashTime                                                                     as BSP_Benchmark_Fmt,
+    If(Cur_BSP_BlanketWashTime > 0, (Cur_BlanketWashTime - Cur_BSP_BlanketWashTime) / Cur_BSP_BlanketWashTime * 100, 0) as Gap_Pct,
+    If(Cur_BSP_BlanketWashTime > 0,
+        (Cur_BlanketWashTime - Cur_BSP_BlanketWashTime) * Cur_BlanketWashEvents * Cur_BSP_Speed, 0) as Sheet_Gap,
+    RangeMin(If(IsNull(Streak_BlanketWashTime), 0, Streak_BlanketWashTime), 4)                  as Streak_4wk,
+    Cur_SchedHours,
+    Cur_BSP_CoveragePct,
+    Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
+    If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
+        If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
+            If(Cur_BSP_ConfScore >= 0.5, 'LOW',
+                'Insufficient History')))                                                        as BSP_Confidence
+RESIDENT CurrentPeriod
+WHERE Not IsNull(Cur_BSP_BlanketWashTime) AND Not IsNull(Cur_BlanketWashTime)
+    AND Cur_BlanketWashTime > Cur_BSP_BlanketWashTime
+    AND Cur_BSP_CoveragePct > $(vMinCoverage);
+
+Concatenate (InsightRecords_Raw)
+LOAD
+    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|FTTIME'        as Insight_ID,
+    Plant,
+    "WC Object ID",
+    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                       as "Plant - WC",
+    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
+    Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
+    'Avg Feeder Trip Time'                                                                      as KPI_Name,
+    'Lever - Downtime %'                                                                        as KPI_Category,
+    Cur_FeederTripTime                                                                          as Cur_Actual,
+    Cur_BSP_FeederTripTime                                                                      as BSP_Benchmark,
+    Cur_FeederTripTime                                                                          as Cur_Actual_Fmt,
+    Cur_BSP_FeederTripTime                                                                      as BSP_Benchmark_Fmt,
+    If(Cur_BSP_FeederTripTime > 0, (Cur_FeederTripTime - Cur_BSP_FeederTripTime) / Cur_BSP_FeederTripTime * 100, 0) as Gap_Pct,
+    If(Cur_BSP_FeederTripTime > 0,
+        (Cur_FeederTripTime - Cur_BSP_FeederTripTime) * Cur_FeederTripEvents * Cur_BSP_Speed, 0) as Sheet_Gap,
+    RangeMin(If(IsNull(Streak_FeederTripTime), 0, Streak_FeederTripTime), 4)                    as Streak_4wk,
+    Cur_SchedHours,
+    Cur_BSP_CoveragePct,
+    Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
+    If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
+        If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
+            If(Cur_BSP_ConfScore >= 0.5, 'LOW',
+                'Insufficient History')))                                                        as BSP_Confidence
+RESIDENT CurrentPeriod
+WHERE Not IsNull(Cur_BSP_FeederTripTime) AND Not IsNull(Cur_FeederTripTime)
+    AND Cur_FeederTripTime > Cur_BSP_FeederTripTime
     AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
 Mach_BSPSpeed_Map:
@@ -3090,17 +2822,17 @@ DROP TABLE CurrentPeriod;
 
 // ============================================================
 // SECTION 43: UNIFIED SHEET IMPACT SCORING
-// Sheet_Impact = Sheet_Gap * (1 + Streak_4wk / 4) in sheets lost vs BSP
+// Sheet_Impact = Round(Sheet_Gap, 0.01) — no streak multiplier
 // Sheet_Gap per KPI (all results are sheets):
-//   OEE         : (BSP - Actual) * Cur_SchedHours * Cur_MaxSpeed
-//   Downtime %  : (Actual - BSP) * Cur_SchedHours * Cur_BSP_Speed
-//   Scrap Rate  : (Actual - BSP) * Cur_RunHours   * Cur_BSP_Speed
-//   Speed       : (BSP - Actual) * Cur_RunHours                    (rate × run hrs)
-//   NTR         : (BSP - Actual) * (Cur_RunHours + Cur_DowntimeHrs)
-//   SetupHrs/Ev : (Actual - BSP) * Cur_SetupEventCount * Cur_BSP_Speed
-//   SetupFreq   : (Actual - BSP) * Cur_SchedHours * Cur_BSP_SetupHrsPerEvent * Cur_BSP_Speed
-//     (excess events costed at BSP duration — does not overlap with SetupHrs/Ev)
-// Streak_4wk capped at 4 (multiplier 1.0–1.25×)
+//   OEE              : (BSP - Actual) * Cur_SchedHours * Cur_MaxSpeed
+//   Downtime %       : (Actual - BSP) * Cur_SchedHours * Cur_BSP_Speed
+//   Scrap Rate       : (Actual - BSP) * Cur_RunHours   * Cur_BSP_Speed
+//   Speed            : (BSP - Actual) * Cur_RunHours
+//   Avg MR Time      : (Actual - BSP) * Cur_SetupEventCount * Cur_BSP_Speed
+//   ARQ              : (BSP - Actual) * Cur_SetupEventCount
+//   Avg Blanket Wash : (Actual - BSP) * Cur_BlanketWashEvents * Cur_BSP_Speed
+//   Avg Feeder Trip  : (Actual - BSP) * Cur_FeederTripEvents  * Cur_BSP_Speed
+// Streak_4wk is a display field only; does not affect Sheet_Impact
 // ============================================================
 
 InsightRecords_Scored:
@@ -3127,11 +2859,7 @@ LOAD
     Cur_Actual_Fmt,
     BSP_Benchmark_Fmt,
     Null()                                                                                      as Reasons,
-    Round(
-        Sheet_Gap
-        * (1 + RangeMin(If(IsNull(Streak_4wk), 0, Streak_4wk), 4) / 4),
-        0.01
-    )                                                                                           as Sheet_Impact
+    Round(Sheet_Gap, 0.01)                                                                      as Sheet_Impact
 RESIDENT InsightRecords_Raw
 WHERE Sheet_Gap > 0;
 
@@ -3180,9 +2908,7 @@ LOAD
         AND Cur_ReasonDownHours / TotalSchedHrs_2wk > Rsn_BSP_DownPct,
         Round(
             (Cur_ReasonDownHours / TotalSchedHrs_2wk - Rsn_BSP_DownPct) * TotalSchedHrs_2wk
-            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0)
-            * (1 + RangeMin(ApplyMap('Rsn_Down_Streak_Map',
-                Plant & '|' & [WC Object ID] & '|' & tPltRsnKey, 0), 4) / 4),
+            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0),
             0.01
         ), 0)                                                                                   as Sheet_Impact
 RESIDENT CurPeriod_DwnReason
@@ -3215,9 +2941,7 @@ LOAD
         Round(
             (Cur_ReasonScrapQty / TotalQty_2wk - Rsn_BSP_ScrapPct)
             * ApplyMap('CurSchedHrs_Map', Plant & '|' & [WC Object ID], 0)
-            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0)
-            * (1 + RangeMin(ApplyMap('Rsn_Scrap_Streak_Map',
-                Plant & '|' & [WC Object ID] & '|' & sPltRsnKey, 0), 4) / 4),
+            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0),
             0.01
         ), 0)                                                                                   as Sheet_Impact
 RESIDENT CurPeriod_ScrReason
@@ -3228,222 +2952,6 @@ DROP TABLE CurPeriod_ScrReason;
 DROP MAPPING TABLE Rsn_Down_Streak_Map;
 DROP MAPPING TABLE Rsn_Scrap_Streak_Map;
 
-
-// ============================================================
-// SECTION 44B: FEEDER TRIPS INSIGHT RECORDS (3 METRICS)
-// All lower-is-better; fire when Cur_Actual > BSP_Benchmark
-// Sheet_Impact = Sheet_Gap (Streak_4wk = 0 — no 4-week trend pipeline
-// for feeder metrics; Sheet_Impact reduces to pure sheets gap)
-// Ratio KPIs (Count Rate, Per10K) pass raw numeric to Cur_Actual_Fmt
-// ============================================================
-
-Concatenate (ReasonInsights_Raw)
-LOAD
-    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|FEEDER_DTPCT'   as Insight_ID,
-    Plant,
-    "WC Object ID",
-    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                        as "Plant - WC",
-    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                     as Department,
-    Date($(v2WeekStart), 'YYYY-MM-DD')                                                           as Period_Start,
-    'Feeder DT%'                                                                                 as KPI_Name,
-    'Lever - Downtime %'                                                                         as KPI_Category,
-    'Feeder DT%'                                                                                 as Reasons,
-    If(TotalSchedHrs_2wk > 0, Cur_FeederDownHours / TotalSchedHrs_2wk, Null())                  as Cur_Actual,
-    Feeder_BSP_DTPct                                                                             as BSP_Benchmark,
-    Num(If(TotalSchedHrs_2wk > 0, Cur_FeederDownHours / TotalSchedHrs_2wk, Null()), '0.00%')    as Cur_Actual_Fmt,
-    Num(Feeder_BSP_DTPct,                                                            '0.00%')    as BSP_Benchmark_Fmt,
-    If(Not IsNull(Feeder_BSP_DTPct) AND Feeder_BSP_DTPct > 0
-        AND TotalSchedHrs_2wk > 0
-        AND Cur_FeederDownHours / TotalSchedHrs_2wk > Feeder_BSP_DTPct,
-        (Cur_FeederDownHours / TotalSchedHrs_2wk - Feeder_BSP_DTPct) / Feeder_BSP_DTPct * 100, 0) as Gap_Pct,
-    0                                                                                            as Streak_4wk,
-    If(Not IsNull(Feeder_BSP_DTPct) AND Feeder_BSP_DTPct > 0
-        AND TotalSchedHrs_2wk > 0
-        AND Cur_FeederDownHours / TotalSchedHrs_2wk > Feeder_BSP_DTPct,
-        Round((Cur_FeederDownHours / TotalSchedHrs_2wk - Feeder_BSP_DTPct) * TotalSchedHrs_2wk
-            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0), 0.01),
-        0)                                                                                       as Sheet_Impact
-RESIDENT CurPeriod_Feeder
-WHERE Not IsNull(Feeder_BSP_DTPct)
-    AND TotalSchedHrs_2wk > 0
-    AND Cur_FeederDownHours / TotalSchedHrs_2wk > Feeder_BSP_DTPct;
-
-Concatenate (ReasonInsights_Raw)
-LOAD
-    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|FEEDER_CNTRATE' as Insight_ID,
-    Plant,
-    "WC Object ID",
-    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                        as "Plant - WC",
-    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                     as Department,
-    Date($(v2WeekStart), 'YYYY-MM-DD')                                                           as Period_Start,
-    'Feeder Count Rate'                                                                          as KPI_Name,
-    'Lever - Downtime %'                                                                         as KPI_Category,
-    'Feeder Count Rate'                                                                          as Reasons,
-    If(TotalSchedHrs_2wk > 0, Cur_FeederDownCount / TotalSchedHrs_2wk, Null())                  as Cur_Actual,
-    Feeder_BSP_CntRate                                                                           as BSP_Benchmark,
-    If(TotalSchedHrs_2wk > 0, Cur_FeederDownCount / TotalSchedHrs_2wk, Null())                  as Cur_Actual_Fmt,
-    Feeder_BSP_CntRate                                                                           as BSP_Benchmark_Fmt,
-    If(Not IsNull(Feeder_BSP_CntRate) AND Feeder_BSP_CntRate > 0
-        AND TotalSchedHrs_2wk > 0
-        AND Cur_FeederDownCount / TotalSchedHrs_2wk > Feeder_BSP_CntRate,
-        (Cur_FeederDownCount / TotalSchedHrs_2wk - Feeder_BSP_CntRate) / Feeder_BSP_CntRate * 100, 0) as Gap_Pct,
-    0                                                                                            as Streak_4wk,
-    If(Not IsNull(Feeder_BSP_CntRate) AND Feeder_BSP_CntRate > 0
-        AND TotalSchedHrs_2wk > 0
-        AND Cur_FeederDownCount / TotalSchedHrs_2wk > Feeder_BSP_CntRate,
-        Round(
-            (Cur_FeederDownCount - Feeder_BSP_CntRate * TotalSchedHrs_2wk)
-            * If(Cur_FeederDownCount > 0, Cur_FeederDownHours / Cur_FeederDownCount, 0)
-            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0),
-            0.01),
-        0)                                                                                       as Sheet_Impact
-RESIDENT CurPeriod_Feeder
-WHERE Not IsNull(Feeder_BSP_CntRate)
-    AND TotalSchedHrs_2wk > 0
-    AND Cur_FeederDownCount / TotalSchedHrs_2wk > Feeder_BSP_CntRate;
-
-Concatenate (ReasonInsights_Raw)
-LOAD
-    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|FEEDER_PER10K'  as Insight_ID,
-    Plant,
-    "WC Object ID",
-    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                        as "Plant - WC",
-    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                     as Department,
-    Date($(v2WeekStart), 'YYYY-MM-DD')                                                           as Period_Start,
-    'Feeder Per10K'                                                                              as KPI_Name,
-    'Lever - Downtime %'                                                                         as KPI_Category,
-    'Feeder Per10K'                                                                              as Reasons,
-    If(Cur_FeederTotalQty > 0, Cur_FeederDownCount / Cur_FeederTotalQty * 10000, Null())         as Cur_Actual,
-    Feeder_BSP_Per10K                                                                            as BSP_Benchmark,
-    If(Cur_FeederTotalQty > 0, Cur_FeederDownCount / Cur_FeederTotalQty * 10000, Null())         as Cur_Actual_Fmt,
-    Feeder_BSP_Per10K                                                                            as BSP_Benchmark_Fmt,
-    If(Not IsNull(Feeder_BSP_Per10K) AND Feeder_BSP_Per10K > 0
-        AND Cur_FeederTotalQty > 0
-        AND Cur_FeederDownCount / Cur_FeederTotalQty * 10000 > Feeder_BSP_Per10K,
-        (Cur_FeederDownCount / Cur_FeederTotalQty * 10000 - Feeder_BSP_Per10K) / Feeder_BSP_Per10K * 100, 0) as Gap_Pct,
-    0                                                                                            as Streak_4wk,
-    If(Not IsNull(Feeder_BSP_Per10K) AND Feeder_BSP_Per10K > 0
-        AND Cur_FeederTotalQty > 0
-        AND Cur_FeederDownCount / Cur_FeederTotalQty * 10000 > Feeder_BSP_Per10K,
-        Round(
-            (Cur_FeederDownCount - Feeder_BSP_Per10K * Cur_FeederTotalQty / 10000)
-            * If(Cur_FeederDownCount > 0, Cur_FeederDownHours / Cur_FeederDownCount, 0)
-            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0),
-            0.01),
-        0)                                                                                       as Sheet_Impact
-RESIDENT CurPeriod_Feeder
-WHERE Not IsNull(Feeder_BSP_Per10K)
-    AND Cur_FeederTotalQty > 0
-    AND Cur_FeederDownCount / Cur_FeederTotalQty * 10000 > Feeder_BSP_Per10K;
-
-DROP TABLE CurPeriod_Feeder;
-
-
-// ============================================================
-// SECTION 44C: BLANKET WASHES INSIGHT RECORDS (3 METRICS)
-// Same pattern as Feeder (Streak_4wk = 0, Sheet_Impact = Sheet_Gap in sheets)
-// ============================================================
-
-Concatenate (ReasonInsights_Raw)
-LOAD
-    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|BLANKET_DTPCT'  as Insight_ID,
-    Plant,
-    "WC Object ID",
-    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                        as "Plant - WC",
-    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                     as Department,
-    Date($(v2WeekStart), 'YYYY-MM-DD')                                                           as Period_Start,
-    'Blanket DT%'                                                                                as KPI_Name,
-    'Lever - Downtime %'                                                                         as KPI_Category,
-    'Blanket DT%'                                                                                as Reasons,
-    If(TotalSchedHrs_2wk > 0, Cur_BlanketDownHours / TotalSchedHrs_2wk, Null())                 as Cur_Actual,
-    Blanket_BSP_DTPct                                                                            as BSP_Benchmark,
-    Num(If(TotalSchedHrs_2wk > 0, Cur_BlanketDownHours / TotalSchedHrs_2wk, Null()), '0.00%')   as Cur_Actual_Fmt,
-    Num(Blanket_BSP_DTPct,                                                           '0.00%')    as BSP_Benchmark_Fmt,
-    If(Not IsNull(Blanket_BSP_DTPct) AND Blanket_BSP_DTPct > 0
-        AND TotalSchedHrs_2wk > 0
-        AND Cur_BlanketDownHours / TotalSchedHrs_2wk > Blanket_BSP_DTPct,
-        (Cur_BlanketDownHours / TotalSchedHrs_2wk - Blanket_BSP_DTPct) / Blanket_BSP_DTPct * 100, 0) as Gap_Pct,
-    0                                                                                            as Streak_4wk,
-    If(Not IsNull(Blanket_BSP_DTPct) AND Blanket_BSP_DTPct > 0
-        AND TotalSchedHrs_2wk > 0
-        AND Cur_BlanketDownHours / TotalSchedHrs_2wk > Blanket_BSP_DTPct,
-        Round((Cur_BlanketDownHours / TotalSchedHrs_2wk - Blanket_BSP_DTPct) * TotalSchedHrs_2wk
-            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0), 0.01),
-        0)                                                                                       as Sheet_Impact
-RESIDENT CurPeriod_Blanket
-WHERE Not IsNull(Blanket_BSP_DTPct)
-    AND TotalSchedHrs_2wk > 0
-    AND Cur_BlanketDownHours / TotalSchedHrs_2wk > Blanket_BSP_DTPct;
-
-Concatenate (ReasonInsights_Raw)
-LOAD
-    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|BLANKET_CNTRATE' as Insight_ID,
-    Plant,
-    "WC Object ID",
-    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                        as "Plant - WC",
-    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                     as Department,
-    Date($(v2WeekStart), 'YYYY-MM-DD')                                                           as Period_Start,
-    'Blanket Count Rate'                                                                         as KPI_Name,
-    'Lever - Downtime %'                                                                         as KPI_Category,
-    'Blanket Count Rate'                                                                         as Reasons,
-    If(TotalSchedHrs_2wk > 0, Cur_BlanketDownCount / TotalSchedHrs_2wk, Null())                 as Cur_Actual,
-    Blanket_BSP_CntRate                                                                          as BSP_Benchmark,
-    If(TotalSchedHrs_2wk > 0, Cur_BlanketDownCount / TotalSchedHrs_2wk, Null())                 as Cur_Actual_Fmt,
-    Blanket_BSP_CntRate                                                                          as BSP_Benchmark_Fmt,
-    If(Not IsNull(Blanket_BSP_CntRate) AND Blanket_BSP_CntRate > 0
-        AND TotalSchedHrs_2wk > 0
-        AND Cur_BlanketDownCount / TotalSchedHrs_2wk > Blanket_BSP_CntRate,
-        (Cur_BlanketDownCount / TotalSchedHrs_2wk - Blanket_BSP_CntRate) / Blanket_BSP_CntRate * 100, 0) as Gap_Pct,
-    0                                                                                            as Streak_4wk,
-    If(Not IsNull(Blanket_BSP_CntRate) AND Blanket_BSP_CntRate > 0
-        AND TotalSchedHrs_2wk > 0
-        AND Cur_BlanketDownCount / TotalSchedHrs_2wk > Blanket_BSP_CntRate,
-        Round(
-            (Cur_BlanketDownCount - Blanket_BSP_CntRate * TotalSchedHrs_2wk)
-            * If(Cur_BlanketDownCount > 0, Cur_BlanketDownHours / Cur_BlanketDownCount, 0)
-            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0),
-            0.01),
-        0)                                                                                       as Sheet_Impact
-RESIDENT CurPeriod_Blanket
-WHERE Not IsNull(Blanket_BSP_CntRate)
-    AND TotalSchedHrs_2wk > 0
-    AND Cur_BlanketDownCount / TotalSchedHrs_2wk > Blanket_BSP_CntRate;
-
-Concatenate (ReasonInsights_Raw)
-LOAD
-    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|BLANKET_PER10K' as Insight_ID,
-    Plant,
-    "WC Object ID",
-    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                        as "Plant - WC",
-    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                     as Department,
-    Date($(v2WeekStart), 'YYYY-MM-DD')                                                           as Period_Start,
-    'Blanket Per10K'                                                                             as KPI_Name,
-    'Lever - Downtime %'                                                                         as KPI_Category,
-    'Blanket Per10K'                                                                             as Reasons,
-    If(Cur_BlanketTotalQty > 0, Cur_BlanketDownCount / Cur_BlanketTotalQty * 10000, Null())      as Cur_Actual,
-    Blanket_BSP_Per10K                                                                           as BSP_Benchmark,
-    If(Cur_BlanketTotalQty > 0, Cur_BlanketDownCount / Cur_BlanketTotalQty * 10000, Null())      as Cur_Actual_Fmt,
-    Blanket_BSP_Per10K                                                                           as BSP_Benchmark_Fmt,
-    If(Not IsNull(Blanket_BSP_Per10K) AND Blanket_BSP_Per10K > 0
-        AND Cur_BlanketTotalQty > 0
-        AND Cur_BlanketDownCount / Cur_BlanketTotalQty * 10000 > Blanket_BSP_Per10K,
-        (Cur_BlanketDownCount / Cur_BlanketTotalQty * 10000 - Blanket_BSP_Per10K) / Blanket_BSP_Per10K * 100, 0) as Gap_Pct,
-    0                                                                                            as Streak_4wk,
-    If(Not IsNull(Blanket_BSP_Per10K) AND Blanket_BSP_Per10K > 0
-        AND Cur_BlanketTotalQty > 0
-        AND Cur_BlanketDownCount / Cur_BlanketTotalQty * 10000 > Blanket_BSP_Per10K,
-        Round(
-            (Cur_BlanketDownCount - Blanket_BSP_Per10K * Cur_BlanketTotalQty / 10000)
-            * If(Cur_BlanketDownCount > 0, Cur_BlanketDownHours / Cur_BlanketDownCount, 0)
-            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0),
-            0.01),
-        0)                                                                                       as Sheet_Impact
-RESIDENT CurPeriod_Blanket
-WHERE Not IsNull(Blanket_BSP_Per10K)
-    AND Cur_BlanketTotalQty > 0
-    AND Cur_BlanketDownCount / Cur_BlanketTotalQty * 10000 > Blanket_BSP_Per10K;
-
-DROP TABLE CurPeriod_Blanket;
 
 DROP MAPPING TABLE CurSchedHrs_Map;
 DROP MAPPING TABLE Mach_BSPSpeed_Map;
