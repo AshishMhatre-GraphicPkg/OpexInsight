@@ -22,6 +22,11 @@
   .pm-table td { padding: 4px 8px; border-bottom: 1px solid #eee; }
   .pm-count { text-align: right; }
   .pm-total-row td { border-top: 2px solid #ccc; }
+  .maint-table { margin-top: 14px; margin-bottom: 24px; border-collapse: collapse; width: 100%; max-width: 600px; font-size: 0.93em; }
+  .maint-table th { background: #fff3cd; color: #664d00; text-align: left; padding: 5px 8px; }
+  .maint-table td { padding: 4px 8px; border-bottom: 1px solid #eee; }
+  .maint-count { text-align: right; }
+  .maint-total-row td { border-top: 2px solid #ccc; font-weight: bold; }
   .footer { margin-top: 32px; font-size: 12px; color: #888; border-top: 1px solid #ddd; padding-top: 8px; }
 </style>
 </head>
@@ -30,14 +35,47 @@
 <h2>{{ subject }}</h2>
 <p>Week of <strong>{{ digest.period_start }}</strong></p>
 
+{% set maint_machines = digest.machines | selectattr('findings') | list %}
+{% set pm_machines = digest.machines | selectattr('pm_summary') | list %}
+{% set all_maint_machines = (maint_machines + pm_machines) | unique(attribute='plant_wc') | list %}
+{% if all_maint_machines %}
+<h3 style="color:#664d00; border-bottom: 2px solid #fff3cd;">Maintenance Report</h3>
+<table class="maint-table">
+  <thead>
+    <tr>
+      <th>Machine</th>
+      <th class="maint-count">Open</th>
+      <th class="maint-count">Missing WO</th>
+      <th class="maint-count">Overdue PM Procedures</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in all_maint_machines %}
+    <tr>
+      <td>{{ m.plant_wc }}</td>
+      <td class="maint-count">{{ m.findings.total_open if m.findings else '' }}</td>
+      <td class="maint-count">{{ m.findings.total_missing_wo if m.findings else '' }}</td>
+      <td class="maint-count">{{ m.pm_summary.total_overdue if m.pm_summary else '' }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="maint-total-row">
+      <td>Total</td>
+      <td class="maint-count">{{ all_maint_machines | selectattr('findings') | map(attribute='findings.total_open') | sum }}</td>
+      <td class="maint-count">{{ all_maint_machines | selectattr('findings') | map(attribute='findings.total_missing_wo') | sum }}</td>
+      <td class="maint-count">{{ all_maint_machines | selectattr('pm_summary') | map(attribute='pm_summary.total_overdue') | sum }}</td>
+    </tr>
+  </tbody>
+</table>
+{% endif %}
+
 {% for m in digest.machines %}
 <h3>{{ m.plant_wc }} — {{ m.department }}</h3>
 <p class="impact">
   <strong>{{ m.plant_wc }}</strong> lost
-  <strong>{{ "%.0f" | format(m.total_sheet_impact) }} sheets</strong> of OEE Impact this week
+  <strong>{{ m.total_sheet_impact | comma_int }} sheets</strong> of OEE Impact this week
   {%- if m.driver_parent %},
   driven primarily by <strong>{{ m.driver_parent }}</strong>
-  ({{ "%.0f" | format(m.driver_parent_sheets) }} sheets)
+  ({{ m.driver_parent_sheets | comma_int }} sheets)
   {%- endif %}.
 </p>
 
@@ -48,7 +86,7 @@
   <li>
     <strong>{{ l.name }}{% if l.reasons %} — {{ l.reasons }}{% endif %}</strong>
     ({{ l.parent_outcome }},
-     {{ "%.0f" | format(l.sheets) }} sheets lost,
+     {{ l.sheets | comma_int }} sheets lost,
      {%- if l.cur_actual %} actual {{ l.cur_actual }} vs BSP {{ l.bsp_benchmark }},{% endif %}
      gap {{ "%.1f" | format(l.gap_pct) }}%
      {%- if l.streak > 0 %},
@@ -67,7 +105,7 @@
   <p>
     Open: <strong>{{ m.findings.total_open }}</strong> &middot;
     Missing WO: <strong>{{ m.findings.total_missing_wo }}</strong> &middot;
-    Overdue: <strong>{{ m.findings.total_overdue }}</strong>
+    Overdue WOs: <strong>{{ m.findings.total_overdue }}</strong>
     {%- if m.findings.high_priority_count %}
       &middot; <span style="color:#7b0000;">&#9888; Priority-10: <strong>{{ m.findings.high_priority_count }}</strong></span>
     {%- endif %}

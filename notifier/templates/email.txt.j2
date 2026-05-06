@@ -2,24 +2,40 @@
 Week of {{ digest.period_start }}
 {{ "=" * 60 }}
 
+{% set maint_machines = digest.machines | selectattr('findings') | list %}
+{% set pm_machines = digest.machines | selectattr('pm_summary') | list %}
+{% set all_maint_machines = (maint_machines + pm_machines) | unique(attribute='plant_wc') | list %}
+{% if all_maint_machines %}
+MAINTENANCE REPORT
+{{ "-" * 60 }}
+{% set col1 = 28 %}
+{{ "Machine".ljust(col1) }}| Open | Missing WO | Overdue PM Procedures
+{{ "-" * col1 }}|------|-----------|----------------------
+{% for m in all_maint_machines %}
+{{ m.plant_wc[:col1 - 1].ljust(col1) }}|  {{ "%3d" | format(m.findings.total_open if m.findings else 0) }} |    {{ "%3d" | format(m.findings.total_missing_wo if m.findings else 0) }}    |    {{ "%3d" | format(m.pm_summary.total_overdue if m.pm_summary else 0) }}
+{% endfor %}
+{{ "-" * col1 }}|------|-----------|----------------------
+{{ "TOTAL".ljust(col1) }}|  {{ "%3d" | format(all_maint_machines | selectattr('findings') | map(attribute='findings.total_open') | sum) }} |    {{ "%3d" | format(all_maint_machines | selectattr('findings') | map(attribute='findings.total_missing_wo') | sum) }}    |    {{ "%3d" | format(all_maint_machines | selectattr('pm_summary') | map(attribute='pm_summary.total_overdue') | sum) }}
+
+{% endif %}
 {% for m in digest.machines %}
 {{ m.plant_wc }} — {{ m.department }}
 {{ "-" * 40 }}
-{{ m.plant_wc }} lost {{ "%.0f" | format(m.total_sheet_impact) }} sheets of OEE Impact this week
-{%- if m.driver_parent %}, driven primarily by {{ m.driver_parent }} ({{ "%.0f" | format(m.driver_parent_sheets) }} sheets)
+{{ m.plant_wc }} lost {{ m.total_sheet_impact | comma_int }} sheets of OEE Impact this week
+{%- if m.driver_parent %}, driven primarily by {{ m.driver_parent }} ({{ m.driver_parent_sheets | comma_int }} sheets)
 {%- endif %}.
 
 {% if m.levers %}
 Top levers to address:
 {% for l in m.levers %}
   {{ loop.index }}. {{ l.name }}{% if l.reasons %} — {{ l.reasons }}{% endif %}
-     {{ l.parent_outcome }} | {{ "%.0f" | format(l.sheets) }} sheets{%- if l.cur_actual %} | actual {{ l.cur_actual }} vs BSP {{ l.bsp_benchmark }}{% endif %} | gap {{ "%.1f" | format(l.gap_pct) }}% | streak {{ l.streak }}/4 {{ l.streak_direction }}
+     {{ l.parent_outcome }} | {{ l.sheets | comma_int }} sheets{%- if l.cur_actual %} | actual {{ l.cur_actual }} vs BSP {{ l.bsp_benchmark }}{% endif %} | gap {{ "%.1f" | format(l.gap_pct) }}% | streak {{ l.streak }}/4 {{ l.streak_direction }}
 {% endfor %}
 {% endif %}
 
 {% if m.findings %}
 Maintenance Findings:
-  Open: {{ m.findings.total_open }}  |  Missing WO: {{ m.findings.total_missing_wo }}  |  Overdue: {{ m.findings.total_overdue }}{% if m.findings.high_priority_count %}  |  Priority-10: {{ m.findings.high_priority_count }}{% endif %}
+  Open: {{ m.findings.total_open }}  |  Missing WO: {{ m.findings.total_missing_wo }}  |  Overdue WOs: {{ m.findings.total_overdue }}{% if m.findings.high_priority_count %}  |  Priority-10: {{ m.findings.high_priority_count }}{% endif %}
 
 {% for s in m.findings.by_section %}
   - {{ s.section }}: {{ s.open_count }} Open{% if s.missing_wo_count %}, {{ s.missing_wo_count }} Missing WO{% endif %}{% if s.overdue_count %}, {{ s.overdue_count }} Overdue{% endif %}{% if s.is_corroborated %} [linked to active lever]{% endif %}
