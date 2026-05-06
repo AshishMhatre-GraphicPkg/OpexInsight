@@ -986,9 +986,6 @@ NoConcatenate
 LOAD * RESIDENT BSP_Setup_L3_Raw WHERE L3_SetupRunCount >= $(vBSP_L3_Min);
 DROP TABLE BSP_Setup_L3_Raw;
 
-DROP TABLE JobFact_Job_BSP;
-DROP TABLE JobFact_Job_BSP_L2;
-
 
 // ============================================================
 // SECTION 23: DOWNTIME REASON BSP — LEVEL 1
@@ -1343,6 +1340,9 @@ BSP_ARQ_L3:
 NoConcatenate
 LOAD * RESIDENT BSP_ARQ_L3_Raw WHERE ARQ_L3_Count >= $(vBSP_L3_Min);
 DROP TABLE BSP_ARQ_L3_Raw;
+
+DROP TABLE JobFact_Job_BSP;
+DROP TABLE JobFact_Job_BSP_L2;
 
 
 ///$tab Step 5
