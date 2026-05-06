@@ -23,6 +23,8 @@ _COL_PERIOD = "Period_Start"
 _COL_TOTAL = "Total_Sheet_Impact"
 _COL_O1_NAME = "Outcome_1_Name"
 _COL_O1_SHEETS = "Outcome_1_Sheets"
+_COL_DRIVER_PARENT = "Driver_Parent_Name"
+_COL_DRIVER_SHEETS = "Driver_Parent_Sheets"
 
 _LEVER_FIELDS = ("Name", "Reasons", "Sheets", "Gap_Pct", "Streak", "Parent_Outcome", "Cur_Actual", "BSP_Benchmark")
 
@@ -77,6 +79,8 @@ class MachineSummary:
     total_sheet_impact: float
     outcome_1: str | None
     outcome_1_sheets: float | None
+    driver_parent: str | None = None
+    driver_parent_sheets: float | None = None
     levers: list[LeverSummary] = field(default_factory=list)
     findings: FindingsSummary | None = None
     pm_summary: PMSummary | None = None
@@ -98,7 +102,7 @@ def _nan_to_none(val):
 
 def _build_levers(row: pd.Series) -> list[LeverSummary]:
     levers = []
-    for i in (1, 2, 3):
+    for i in (1, 2, 3, 4, 5):
         name = _nan_to_none(row.get(f"Lever_{i}_Name"))
         if name is None:
             break
@@ -161,6 +165,8 @@ def group_by_manager(
                 wc_id = str(row.get("WC Object ID", ""))
                 machine_pm = build_pm_summary_for_machine(pm_df, wc_id)
 
+            driver_parent = _nan_to_none(row.get(_COL_DRIVER_PARENT))
+            driver_sheets_raw = row.get(_COL_DRIVER_SHEETS)
             machines.append(
                 MachineSummary(
                     plant_wc=str(row[_COL_PLANT_WC]),
@@ -169,6 +175,8 @@ def group_by_manager(
                     total_sheet_impact=float(row.get(_COL_TOTAL, 0) or 0),
                     outcome_1=_nan_to_none(row.get(_COL_O1_NAME)),
                     outcome_1_sheets=float(row[_COL_O1_SHEETS]) if _nan_to_none(row.get(_COL_O1_SHEETS)) is not None else None,
+                    driver_parent=str(driver_parent) if driver_parent else None,
+                    driver_parent_sheets=float(driver_sheets_raw) if _nan_to_none(driver_sheets_raw) is not None else None,
                     levers=levers,
                     findings=machine_findings,
                     pm_summary=machine_pm,

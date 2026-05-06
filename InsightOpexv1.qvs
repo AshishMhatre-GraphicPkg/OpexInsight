@@ -3738,6 +3738,125 @@ ORDER BY Plant, [WC Object ID], Lever_Sheets DESC;
 DROP TABLE Temp_PoolLevers;
 
 
+// ---- Step F2: driver-parent map ----
+// Picks the highest-Sheet_Impact occurrence of Downtime % or Scrap Rate
+// among the top-3 OEE levers.  Used by the email summary clause.
+// Returns Null when neither parent appears in the pool.
+
+Temp_DriverParent:
+NoConcatenate
+LOAD
+    Plant,
+    [WC Object ID],
+    FirstSortedValue(Lever_Name,   -Lever_Sheets)  as Driver_Parent_Name,
+    FirstSortedValue(Lever_Sheets, -Lever_Sheets)  as Driver_Parent_Sheets
+RESIDENT Temp_PoolLeversRanked
+WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %', 'Scrap Rate') > 0
+GROUP BY Plant, [WC Object ID];
+
+DriverParent_Name_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID],
+    Driver_Parent_Name
+RESIDENT Temp_DriverParent;
+
+DriverParent_Sheets_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID],
+    Driver_Parent_Sheets
+RESIDENT Temp_DriverParent;
+
+DROP TABLE Temp_DriverParent;
+
+
+// ---- Step F3: sub-lever ranked pool ----
+// Ranks Downtime % sub-levers (Lever - Downtime %) and Scrap Rate sub-levers
+// (Lever - Scrap Rate) 1-2 per (Plant, WC, Parent) by Sheet_Impact DESC.
+
+Temp_SubLeversRanked:
+NoConcatenate
+LOAD
+    Plant,
+    [WC Object ID],
+    KPI_Name                                                                as Sub_Name,
+    Reasons                                                                 as Sub_Reasons,
+    Sheet_Impact                                                            as Sub_Sheets,
+    Gap_Pct                                                                 as Sub_Gap_Pct,
+    Streak_4wk                                                              as Sub_Streak,
+    Replace(KPI_Category, 'Lever - ', '')                                   as Sub_Parent,
+    Cur_Actual                                                              as Sub_Cur_Actual,
+    BSP_Benchmark                                                           as Sub_BSP_Benchmark,
+    If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID')
+         AND Replace(KPI_Category, 'Lever - ', '') = Peek('Sub_Parent'),
+       Peek('Sub_Rank') + 1, 1)                                             as Sub_Rank
+RESIDENT InsightRecords
+WHERE Period_Start = $(v2WeekStart)
+  AND Match(KPI_Category, 'Lever - Downtime %', 'Lever - Scrap Rate') > 0
+ORDER BY Plant, [WC Object ID], KPI_Category, Sheet_Impact DESC;
+
+
+// ---- Step F3a: sub-lever position maps (7 fields × 2 sub-ranks = 14 maps) ----
+// Key: Plant|WCObjectID|ParentName
+
+Sub_R1_Name_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_Name
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 1;
+
+Sub_R1_Reasons_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_Reasons
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 1;
+
+Sub_R1_Sheets_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_Sheets
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 1;
+
+Sub_R1_GapPct_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_Gap_Pct
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 1;
+
+Sub_R1_Streak_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_Streak
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 1;
+
+Sub_R1_CurActual_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_Cur_Actual
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 1;
+
+Sub_R1_BSP_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_BSP_Benchmark
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 1;
+
+Sub_R2_Name_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_Name
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 2;
+
+Sub_R2_Reasons_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_Reasons
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 2;
+
+Sub_R2_Sheets_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_Sheets
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 2;
+
+Sub_R2_GapPct_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_Gap_Pct
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 2;
+
+Sub_R2_Streak_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_Streak
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 2;
+
+Sub_R2_CurActual_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_Cur_Actual
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 2;
+
+Sub_R2_BSP_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Sub_Parent, Sub_BSP_Benchmark
+RESIDENT Temp_SubLeversRanked WHERE Sub_Rank = 2;
+
+DROP TABLE Temp_SubLeversRanked;
+
+
 // ---- Step G: fallback — rank ALL levers, but only for machines ----
 // that have no pool levers (ApplyMap returns 0 for those machines)
 
@@ -3765,118 +3884,310 @@ ORDER BY Plant, [WC Object ID], Sheet_Impact DESC;
 DROP MAPPING TABLE HasPoolLevers_Map;
 
 
-// ---- Step H: combine pool + fallback, cap at top-3 ----
+// ---- Step H: assemble final lever list (up to 5 per machine) ----
+// Pass 1  : unaffected levers (not Downtime % / Scrap Rate)
+//           + swap targets with zero sub-reasons (parent kept as fallback)
+// Pass 2a : first sub-reason replacing each Downtime % / Scrap Rate slot
+// Pass 2b : second sub-reason when 2+ exist
+// Each pass runs for both pool-lever and fallback-lever sources.
+// Order_Key = ParentRank*10 + SubOffset so ORDER BY ASC preserves original
+// parent ordering with sub-reasons immediately following their parent slot.
 
-Temp_QualifiedLevers:
+Temp_FinalLevers:
 NoConcatenate
-LOAD * RESIDENT Temp_PoolLeversRanked   WHERE Lever_Rank <= 3;
+LOAD
+    Plant, [WC Object ID],
+    Lever_Rank * 10 + 0                                     as Order_Key,
+    Lever_Name, Lever_Reasons, Lever_Sheets, Lever_Gap_Pct,
+    Lever_Streak, Lever_Parent_Outcome, Lever_Cur_Actual, Lever_BSP_Benchmark
+RESIDENT Temp_PoolLeversRanked
+WHERE Lever_Rank <= 3
+  AND (Match(Lever_Name, 'Downtime %', 'Scrap Rate') = 0
+       OR IsNull(ApplyMap('Sub_R1_Name_Map',
+            Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())));
 
-Concatenate (Temp_QualifiedLevers)
-LOAD * RESIDENT Temp_AllLeversRanked    WHERE Lever_Rank <= 3;
+CONCATENATE (Temp_FinalLevers)
+LOAD
+    Plant, [WC Object ID],
+    Lever_Rank * 10 + 0                                     as Order_Key,
+    Lever_Name, Lever_Reasons, Lever_Sheets, Lever_Gap_Pct,
+    Lever_Streak, Lever_Parent_Outcome, Lever_Cur_Actual, Lever_BSP_Benchmark
+RESIDENT Temp_AllLeversRanked
+WHERE Lever_Rank <= 3
+  AND (Match(Lever_Name, 'Downtime %', 'Scrap Rate') = 0
+       OR IsNull(ApplyMap('Sub_R1_Name_Map',
+            Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())));
+
+// Pass 2a — first sub-reason (pool source)
+CONCATENATE (Temp_FinalLevers)
+LOAD
+    Plant, [WC Object ID],
+    Lever_Rank * 10 + 1                                                             as Order_Key,
+    ApplyMap('Sub_R1_Name_Map',      Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Name,
+    ApplyMap('Sub_R1_Reasons_Map',   Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Reasons,
+    ApplyMap('Sub_R1_Sheets_Map',    Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Sheets,
+    ApplyMap('Sub_R1_GapPct_Map',    Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Gap_Pct,
+    ApplyMap('Sub_R1_Streak_Map',    Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Streak,
+    Lever_Name                                                                      as Lever_Parent_Outcome,
+    ApplyMap('Sub_R1_CurActual_Map', Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Cur_Actual,
+    ApplyMap('Sub_R1_BSP_Map',       Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_BSP_Benchmark
+RESIDENT Temp_PoolLeversRanked
+WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %', 'Scrap Rate') > 0
+  AND Not IsNull(ApplyMap('Sub_R1_Name_Map',
+       Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null()));
+
+// Pass 2a — first sub-reason (fallback source)
+CONCATENATE (Temp_FinalLevers)
+LOAD
+    Plant, [WC Object ID],
+    Lever_Rank * 10 + 1                                                             as Order_Key,
+    ApplyMap('Sub_R1_Name_Map',      Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Name,
+    ApplyMap('Sub_R1_Reasons_Map',   Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Reasons,
+    ApplyMap('Sub_R1_Sheets_Map',    Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Sheets,
+    ApplyMap('Sub_R1_GapPct_Map',    Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Gap_Pct,
+    ApplyMap('Sub_R1_Streak_Map',    Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Streak,
+    Lever_Name                                                                      as Lever_Parent_Outcome,
+    ApplyMap('Sub_R1_CurActual_Map', Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Cur_Actual,
+    ApplyMap('Sub_R1_BSP_Map',       Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_BSP_Benchmark
+RESIDENT Temp_AllLeversRanked
+WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %', 'Scrap Rate') > 0
+  AND Not IsNull(ApplyMap('Sub_R1_Name_Map',
+       Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null()));
+
+// Pass 2b — second sub-reason (pool source)
+CONCATENATE (Temp_FinalLevers)
+LOAD
+    Plant, [WC Object ID],
+    Lever_Rank * 10 + 2                                                             as Order_Key,
+    ApplyMap('Sub_R2_Name_Map',      Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Name,
+    ApplyMap('Sub_R2_Reasons_Map',   Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Reasons,
+    ApplyMap('Sub_R2_Sheets_Map',    Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Sheets,
+    ApplyMap('Sub_R2_GapPct_Map',    Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Gap_Pct,
+    ApplyMap('Sub_R2_Streak_Map',    Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Streak,
+    Lever_Name                                                                      as Lever_Parent_Outcome,
+    ApplyMap('Sub_R2_CurActual_Map', Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Cur_Actual,
+    ApplyMap('Sub_R2_BSP_Map',       Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_BSP_Benchmark
+RESIDENT Temp_PoolLeversRanked
+WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %', 'Scrap Rate') > 0
+  AND Not IsNull(ApplyMap('Sub_R2_Name_Map',
+       Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null()));
+
+// Pass 2b — second sub-reason (fallback source)
+CONCATENATE (Temp_FinalLevers)
+LOAD
+    Plant, [WC Object ID],
+    Lever_Rank * 10 + 2                                                             as Order_Key,
+    ApplyMap('Sub_R2_Name_Map',      Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Name,
+    ApplyMap('Sub_R2_Reasons_Map',   Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Reasons,
+    ApplyMap('Sub_R2_Sheets_Map',    Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Sheets,
+    ApplyMap('Sub_R2_GapPct_Map',    Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Gap_Pct,
+    ApplyMap('Sub_R2_Streak_Map',    Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Streak,
+    Lever_Name                                                                      as Lever_Parent_Outcome,
+    ApplyMap('Sub_R2_CurActual_Map', Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Cur_Actual,
+    ApplyMap('Sub_R2_BSP_Map',       Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_BSP_Benchmark
+RESIDENT Temp_AllLeversRanked
+WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %', 'Scrap Rate') > 0
+  AND Not IsNull(ApplyMap('Sub_R2_Name_Map',
+       Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null()));
 
 DROP TABLE Temp_PoolLeversRanked;
 DROP TABLE Temp_AllLeversRanked;
 
+DROP MAPPING TABLE Sub_R1_Name_Map;
+DROP MAPPING TABLE Sub_R1_Reasons_Map;
+DROP MAPPING TABLE Sub_R1_Sheets_Map;
+DROP MAPPING TABLE Sub_R1_GapPct_Map;
+DROP MAPPING TABLE Sub_R1_Streak_Map;
+DROP MAPPING TABLE Sub_R1_CurActual_Map;
+DROP MAPPING TABLE Sub_R1_BSP_Map;
+DROP MAPPING TABLE Sub_R2_Name_Map;
+DROP MAPPING TABLE Sub_R2_Reasons_Map;
+DROP MAPPING TABLE Sub_R2_Sheets_Map;
+DROP MAPPING TABLE Sub_R2_GapPct_Map;
+DROP MAPPING TABLE Sub_R2_Streak_Map;
+DROP MAPPING TABLE Sub_R2_CurActual_Map;
+DROP MAPPING TABLE Sub_R2_BSP_Map;
 
-// ---- Step I: lever position maps (5 fields × 3 ranks = 15 maps) ----
+
+// ---- Step H2: re-rank final levers 1..N per machine ----
+
+Temp_FinalLeversRanked:
+NoConcatenate
+LOAD
+    Plant, [WC Object ID],
+    Lever_Name, Lever_Reasons, Lever_Sheets, Lever_Gap_Pct,
+    Lever_Streak, Lever_Parent_Outcome, Lever_Cur_Actual, Lever_BSP_Benchmark,
+    If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID'),
+       Peek('Lever_Rank') + 1, 1)  as Lever_Rank
+RESIDENT Temp_FinalLevers
+ORDER BY Plant, [WC Object ID], Order_Key ASC;
+
+DROP TABLE Temp_FinalLevers;
+
+
+// ---- Step I: lever position maps (8 fields × 5 ranks = 40 maps) ----
 
 Lever1_Name_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Name
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 1;
 
 Lever1_Reasons_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 1;
 
 Lever1_Sheets_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Sheets
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 1;
 
 Lever1_GapPct_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Gap_Pct
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 1;
 
 Lever1_Streak_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Streak
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 1;
 
 Lever1_Parent_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Parent_Outcome
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
-
-Lever2_Name_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Name
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
-
-Lever2_Reasons_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
-
-Lever2_Sheets_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Sheets
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
-
-Lever2_GapPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Gap_Pct
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
-
-Lever2_Streak_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Streak
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
-
-Lever2_Parent_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Parent_Outcome
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
-
-Lever3_Name_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Name
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
-
-Lever3_Reasons_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
-
-Lever3_Sheets_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Sheets
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
-
-Lever3_GapPct_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Gap_Pct
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
-
-Lever3_Streak_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Streak
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
-
-Lever3_Parent_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Parent_Outcome
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 1;
 
 Lever1_CurActual_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Cur_Actual
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 1;
 
 Lever1_BSP_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_BSP_Benchmark
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 1;
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 1;
+
+Lever2_Name_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Name
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 2;
+
+Lever2_Reasons_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 2;
+
+Lever2_Sheets_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Sheets
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 2;
+
+Lever2_GapPct_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Gap_Pct
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 2;
+
+Lever2_Streak_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Streak
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 2;
+
+Lever2_Parent_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Parent_Outcome
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 2;
 
 Lever2_CurActual_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Cur_Actual
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 2;
 
 Lever2_BSP_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_BSP_Benchmark
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 2;
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 2;
+
+Lever3_Name_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Name
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 3;
+
+Lever3_Reasons_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 3;
+
+Lever3_Sheets_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Sheets
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 3;
+
+Lever3_GapPct_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Gap_Pct
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 3;
+
+Lever3_Streak_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Streak
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 3;
+
+Lever3_Parent_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Parent_Outcome
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 3;
 
 Lever3_CurActual_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Cur_Actual
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 3;
 
 Lever3_BSP_Map:
 MAPPING LOAD Plant & '|' & [WC Object ID], Lever_BSP_Benchmark
-RESIDENT Temp_QualifiedLevers WHERE Lever_Rank = 3;
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 3;
 
-DROP TABLE Temp_QualifiedLevers;
+Lever4_Name_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Name
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 4;
+
+Lever4_Reasons_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 4;
+
+Lever4_Sheets_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Sheets
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 4;
+
+Lever4_GapPct_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Gap_Pct
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 4;
+
+Lever4_Streak_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Streak
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 4;
+
+Lever4_Parent_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Parent_Outcome
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 4;
+
+Lever4_CurActual_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Cur_Actual
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 4;
+
+Lever4_BSP_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_BSP_Benchmark
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 4;
+
+Lever5_Name_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Name
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 5;
+
+Lever5_Reasons_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Reasons
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 5;
+
+Lever5_Sheets_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Sheets
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 5;
+
+Lever5_GapPct_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Gap_Pct
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 5;
+
+Lever5_Streak_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Streak
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 5;
+
+Lever5_Parent_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Parent_Outcome
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 5;
+
+Lever5_CurActual_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_Cur_Actual
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 5;
+
+Lever5_BSP_Map:
+MAPPING LOAD Plant & '|' & [WC Object ID], Lever_BSP_Benchmark
+RESIDENT Temp_FinalLeversRanked WHERE Lever_Rank = 5;
+
+DROP TABLE Temp_FinalLeversRanked;
 
 
 // ---- Step J: base grain + pivot to wide via ApplyMap ----
@@ -3929,37 +4240,73 @@ LOAD
     ApplyMap('Lever3_Streak_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Streak,
     ApplyMap('Lever3_Parent_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_3_Parent_Outcome,
     ApplyMap('Lever3_CurActual_Map', Plant & '|' & [WC Object ID],  Null())     as Lever_3_Cur_Actual,
-    ApplyMap('Lever3_BSP_Map',       Plant & '|' & [WC Object ID],  Null())     as Lever_3_BSP_Benchmark
+    ApplyMap('Lever3_BSP_Map',       Plant & '|' & [WC Object ID],  Null())     as Lever_3_BSP_Benchmark,
+    ApplyMap('Lever4_Name_Map',      Plant & '|' & [WC Object ID],  Null())     as Lever_4_Name,
+    ApplyMap('Lever4_Reasons_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_4_Reasons,
+    ApplyMap('Lever4_Sheets_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_4_Sheets,
+    ApplyMap('Lever4_GapPct_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_4_Gap_Pct,
+    ApplyMap('Lever4_Streak_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_4_Streak,
+    ApplyMap('Lever4_Parent_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_4_Parent_Outcome,
+    ApplyMap('Lever4_CurActual_Map', Plant & '|' & [WC Object ID],  Null())     as Lever_4_Cur_Actual,
+    ApplyMap('Lever4_BSP_Map',       Plant & '|' & [WC Object ID],  Null())     as Lever_4_BSP_Benchmark,
+    ApplyMap('Lever5_Name_Map',      Plant & '|' & [WC Object ID],  Null())     as Lever_5_Name,
+    ApplyMap('Lever5_Reasons_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_5_Reasons,
+    ApplyMap('Lever5_Sheets_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_5_Sheets,
+    ApplyMap('Lever5_GapPct_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_5_Gap_Pct,
+    ApplyMap('Lever5_Streak_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_5_Streak,
+    ApplyMap('Lever5_Parent_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_5_Parent_Outcome,
+    ApplyMap('Lever5_CurActual_Map', Plant & '|' & [WC Object ID],  Null())     as Lever_5_Cur_Actual,
+    ApplyMap('Lever5_BSP_Map',       Plant & '|' & [WC Object ID],  Null())     as Lever_5_BSP_Benchmark,
+    ApplyMap('DriverParent_Name_Map',   Plant & '|' & [WC Object ID],  Null())  as Driver_Parent_Name,
+    ApplyMap('DriverParent_Sheets_Map', Plant & '|' & [WC Object ID],  Null())  as Driver_Parent_Sheets
 RESIDENT MachineWeekSummary_Base;
 
 DROP TABLE MachineWeekSummary_Base;
 DROP MAPPING TABLE TotalImpact_Map;
 DROP MAPPING TABLE Outcome1_Map;
 DROP MAPPING TABLE Outcome1_Sheets_Map;
+DROP MAPPING TABLE DriverParent_Name_Map;
+DROP MAPPING TABLE DriverParent_Sheets_Map;
 DROP MAPPING TABLE Lever1_Name_Map;
 DROP MAPPING TABLE Lever1_Reasons_Map;
 DROP MAPPING TABLE Lever1_Sheets_Map;
 DROP MAPPING TABLE Lever1_GapPct_Map;
 DROP MAPPING TABLE Lever1_Streak_Map;
 DROP MAPPING TABLE Lever1_Parent_Map;
+DROP MAPPING TABLE Lever1_CurActual_Map;
+DROP MAPPING TABLE Lever1_BSP_Map;
 DROP MAPPING TABLE Lever2_Name_Map;
 DROP MAPPING TABLE Lever2_Reasons_Map;
 DROP MAPPING TABLE Lever2_Sheets_Map;
 DROP MAPPING TABLE Lever2_GapPct_Map;
 DROP MAPPING TABLE Lever2_Streak_Map;
 DROP MAPPING TABLE Lever2_Parent_Map;
+DROP MAPPING TABLE Lever2_CurActual_Map;
+DROP MAPPING TABLE Lever2_BSP_Map;
 DROP MAPPING TABLE Lever3_Name_Map;
 DROP MAPPING TABLE Lever3_Reasons_Map;
 DROP MAPPING TABLE Lever3_Sheets_Map;
 DROP MAPPING TABLE Lever3_GapPct_Map;
 DROP MAPPING TABLE Lever3_Streak_Map;
 DROP MAPPING TABLE Lever3_Parent_Map;
-DROP MAPPING TABLE Lever1_CurActual_Map;
-DROP MAPPING TABLE Lever1_BSP_Map;
-DROP MAPPING TABLE Lever2_CurActual_Map;
-DROP MAPPING TABLE Lever2_BSP_Map;
 DROP MAPPING TABLE Lever3_CurActual_Map;
 DROP MAPPING TABLE Lever3_BSP_Map;
+DROP MAPPING TABLE Lever4_Name_Map;
+DROP MAPPING TABLE Lever4_Reasons_Map;
+DROP MAPPING TABLE Lever4_Sheets_Map;
+DROP MAPPING TABLE Lever4_GapPct_Map;
+DROP MAPPING TABLE Lever4_Streak_Map;
+DROP MAPPING TABLE Lever4_Parent_Map;
+DROP MAPPING TABLE Lever4_CurActual_Map;
+DROP MAPPING TABLE Lever4_BSP_Map;
+DROP MAPPING TABLE Lever5_Name_Map;
+DROP MAPPING TABLE Lever5_Reasons_Map;
+DROP MAPPING TABLE Lever5_Sheets_Map;
+DROP MAPPING TABLE Lever5_GapPct_Map;
+DROP MAPPING TABLE Lever5_Streak_Map;
+DROP MAPPING TABLE Lever5_Parent_Map;
+DROP MAPPING TABLE Lever5_CurActual_Map;
+DROP MAPPING TABLE Lever5_BSP_Map;
 
 
 // ---- Step K: store ----

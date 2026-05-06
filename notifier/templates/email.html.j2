@@ -35,9 +35,9 @@
 <p class="impact">
   <strong>{{ m.plant_wc }}</strong> lost
   <strong>{{ "%.0f" | format(m.total_sheet_impact) }} sheets</strong> of OEE Impact this week
-  {%- if m.outcome_1 %},
-  driven primarily by <strong>{{ m.outcome_1 }}</strong>
-  ({{ "%.0f" | format(m.outcome_1_sheets) }} sheets)
+  {%- if m.driver_parent %},
+  driven primarily by <strong>{{ m.driver_parent }}</strong>
+  ({{ "%.0f" | format(m.driver_parent_sheets) }} sheets)
   {%- endif %}.
 </p>
 
@@ -57,8 +57,7 @@
 {% endfor %}
 </ul>
 <p>
-  Improving their gap and breaking their streak will move
-  <strong>{{ m.outcome_1 }}</strong>.
+  Improving these gaps will move <strong>OEE</strong>.
 </p>
 {% endif %}
 

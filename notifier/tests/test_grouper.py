@@ -54,10 +54,10 @@ def test_levers_parsed(df):
     assert wc01.levers[0].streak == 3
 
 
-def test_machine_with_one_lever_stops_at_none(df):
+def test_machine_with_two_levers_stops_at_none(df):
     digests = group_by_manager(df)
     a = next(d for d in digests if d.manager_email == "manager.a@company.com")
-    # Second machine (Gluer 02) has Lever_3 cols empty in CSV
+    # Gluer 02 has only 2 levers; Lever_3 cols are empty — loop must stop
     wc02 = next(m for m in a.machines if "Gluer 02" in m.plant_wc)
     assert len(wc02.levers) == 2
 
@@ -106,8 +106,25 @@ def test_raw_numeric_lever_no_percent(df):
 
 
 def test_missing_cur_actual_returns_empty_string(df):
-    # Gluer 02 has no Lever_3 — should not error and Lever_3 is absent
+    # Gluer 02 has no Lever_3 — loop stops at NaN name, no error
     digests = group_by_manager(df)
     a = next(d for d in digests if d.manager_email == "manager.a@company.com")
     wc02 = next(m for m in a.machines if "Gluer 02" in m.plant_wc)
     assert len(wc02.levers) == 2  # Lever_3 absent, so only 2
+
+
+def test_driver_parent_populated_when_downtime_present(df):
+    digests = group_by_manager(df)
+    a = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    wc01 = next(m for m in a.machines if "Gluer 01" in m.plant_wc)
+    assert wc01.driver_parent == "Downtime %"
+    assert wc01.driver_parent_sheets == 5100.0
+
+
+def test_driver_parent_none_when_neither_present(df):
+    # Gluer 02 has only OEE-parent levers (Speed, Setup Frequency)
+    digests = group_by_manager(df)
+    a = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    wc02 = next(m for m in a.machines if "Gluer 02" in m.plant_wc)
+    assert wc02.driver_parent is None
+    assert wc02.driver_parent_sheets is None

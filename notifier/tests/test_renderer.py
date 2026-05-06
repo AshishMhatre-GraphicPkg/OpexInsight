@@ -59,11 +59,19 @@ def test_html_no_streak_when_zero(digest_b):
     assert "2/4" in html
 
 
-def test_html_single_outcome_narrative(digest_b):
-    # Only OEE outcome — no "and <strong>" secondary outcome rendered
+def test_html_driven_by_downtime_when_present(digest_b):
+    # Flexo 01 has driver_parent = Downtime % — clause must appear
     html = render_html(digest_b, "Test Subject")
-    assert "driven primarily by <strong>OEE</strong>" in html
-    assert "and <strong>" not in html
+    assert "driven primarily by <strong>Downtime %</strong>" in html
+
+
+def test_html_no_driven_clause_when_absent(digest_a):
+    # digest_a contains Gluer 02 which has driver_parent = None — no clause
+    html = render_html(digest_a, "Test Subject")
+    # Gluer 01 has driver_parent so "driven primarily by" appears at least once,
+    # but the Gluer 02 block must NOT contain it (driver_parent is None)
+    # Verify the string "driven primarily by <strong>OEE" never appears
+    assert "driven primarily by <strong>OEE" not in html
 
 
 def test_text_contains_machine_name(digest_a):
