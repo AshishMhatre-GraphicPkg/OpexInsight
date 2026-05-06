@@ -96,9 +96,11 @@ One row per machine. Join key for findings is `Plant` + `WC Object ID`. Join key
 | `Plant - WC`, `Department`, `Period_Start` | Identity / display |
 | `Total_Sheet_Impact` | OEE row's `Sheet_Impact` only — primary sort key (DESC). Levers ladder into OEE so summing all rows would double-count. |
 | `Outcome_1_Name`, `Outcome_1_Sheets` | Single Outcome KPI (always OEE) — `Outcome_2_*` columns removed |
-| `Lever_{1,2,3}_{Name,Reasons,Sheets,Gap_Pct,Streak,Parent_Outcome}` | Top-3 Lever KPIs |
+| `Lever_{1..5}_{Name,Reasons,Sheets,Gap_Pct,Streak,Parent_Outcome,Cur_Actual,BSP_Benchmark}` | Up to 5 levers after sub-reason swap (see below) |
+| `Driver_Parent_Name` | `'Downtime %'` or `'Scrap Rate'` if either appeared in the original top-3 OEE levers; empty otherwise |
+| `Driver_Parent_Sheets` | Sheet_Impact of the dominant driver parent; empty when `Driver_Parent_Name` is empty |
 
-`_build_levers()` stops at the first `Lever_N_Name` that is NaN — levers must be contiguous.
+`_build_levers()` iterates `i in (1, 2, 3, 4, 5)` and stops at the first `Lever_N_Name` that is NaN — levers must be contiguous. Machines can have 2–5 levers depending on the sub-reason swap.
 
 ### Findings.csv schema (`findings.py`)
 
@@ -184,7 +186,9 @@ SECTION_TO_LEVER_KEYWORDS = {
 
 - **`fetch.py` and `mailer.py` each acquire their own MSAL token** — no shared token object; each module is self-contained.
 - **`findings.py` and `pm_compliance.py` are pure** — no I/O. Both follow the same contract: `load_X(bytes)` → DataFrame; `build_X_for_machine(df, …)` → dataclass or `None`. Tests call both directly with no network.
-- **`grouper.py` is pure** — `findings_df=None` and `pm_df=None` make both optional; existing callers are unchanged. `MachineSummary` has a single `outcome_1` / `outcome_1_sheets` (always OEE); `outcome_2_*` fields were removed when the KPI set was rationalized to one Outcome.
+- **`grouper.py` is pure** — `findings_df=None` and `pm_df=None` make both optional; existing callers are unchanged. `MachineSummary` carries `outcome_1` / `outcome_1_sheets` (always OEE) and the new `driver_parent` / `driver_parent_sheets` fields (both `None` when neither Downtime % nor Scrap Rate drove the week).
+- **Sub-lever swap rule** — Qlik Section 49 replaces each `Downtime %` / `Scrap Rate` occurrence in the top-3 OEE lever pool with up to 2 sub-reasons before writing `MachineWeekSummary.csv`. Python reads the already-swapped rows — there is no swap logic in Python. `Lever_N_Parent_Outcome` on a sub-reason row holds the parent name (e.g. `'Downtime %'`) so templates can show "Sub-lever of Downtime %". `Driver_Parent_Name` / `Driver_Parent_Sheets` are the email headline source — not derived from levers in Python.
+- **Summary clause** — `email.html.j2` and `email.txt.j2` render "driven primarily by **\<driver_parent\>** (X sheets)" when `m.driver_parent` is non-null; the clause is omitted entirely otherwise. The old "driven primarily by OEE" wording no longer exists.
 - **Findings and PM failures are non-fatal** — each catches exceptions, sends an admin alert, and continues the digest without that block. Pattern reuses `send_admin_alert` at `mailer.py:85`.
 - **PM join uses `WC Object ID` only** — Plant is excluded because PMComplianceDump stores it as a short int (`8`) while MachineWeekSummary uses zero-padded strings (`0008`). `WC Object ID` is unique across plants.
 - **PM block placement** — amber table rendered immediately below the Findings block within each per-machine card; suppressed entirely when `pm_summary is None`.

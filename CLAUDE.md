@@ -106,6 +106,21 @@ Per-reason `Streak_4wk` (range 0–4) is the count of weeks in the last 4 full w
 - **Section 48:** Incremental store — unchanged mechanics.
 - **Section 49:** `MachineWeekSummary.csv` export. `Total_Sheet_Impact` = the OEE row's `Sheet_Impact` only (`WHERE KPI_Name = 'OEE'`). Levers ladder into OEE so summing all rows double-counts; OEE Sheet_Impact captures total loss vs BSP. Machines with no OEE insight (OEE >= BSP) are excluded. The QVD's historical rows pre-dating this refactor will have legacy fields (`tPltRsnKey`, `Composite_Score`, `Impact_Score`, `Streak_13wk`) as NULL on new writes and new fields (`Reasons`, `OEE_Impact`, `Streak_4wk` for reasons) as NULL on old rows — Qlik concat tolerates this. A one-time full reload cleans up the QVD if desired.
 
+  **Sub-reason swap rule (Section 49):** Before writing `Lever_N_*` columns, each occurrence of `Downtime %` or `Scrap Rate` in the top-3 `'Lever - OEE'` pool is replaced by its top-2 sub-reasons (by `Sheet_Impact`). Sub-reason source: `KPI_Category = 'Lever - Downtime %'` (Downtime Reason, Feeder ×3, Blanket ×3) and `KPI_Category = 'Lever - Scrap Rate'` (Scrap Reason). Each swap expands one parent slot into up to 2 sub-reason rows; total lever count grows from 3 to up to 5 (one swap → 4; two swaps → 5). Unaffected parent levers keep their original rank position; sub-reasons are inserted at the parent's position ordered by Sheet_Impact DESC. **Fallback:** if a machine has Downtime %/Scrap Rate in top-3 but zero qualifying sub-reason rows, the parent stays in place.
+
+  **Driver parent clause:** After computing the sub-reason pool, two columns are added to the export:
+  - `Driver_Parent_Name` — whichever of `{Downtime %, Scrap Rate}` had the highest `Sheet_Impact` in the original top-3 (`FirstSortedValue` over the pool); `Null()` if neither appeared.
+  - `Driver_Parent_Sheets` — that parent's `Sheet_Impact`.
+  The email headline reads "driven primarily by **\<Driver_Parent_Name\>** (X sheets)" when `Driver_Parent_Name` is non-null; the clause is omitted entirely otherwise.
+
+  **Section 49 intermediate tables:**
+  - `Temp_PoolLeversRanked` — top-3 `'Lever - OEE'` rows ranked per machine.
+  - `Temp_DriverParent` → `DriverParent_Name_Map` / `DriverParent_Sheets_Map` — keyed by `Plant|WC Object ID`.
+  - `Temp_SubLeversRanked` — sub-reason rows ranked per machine+parent, `Sub_Rank` 1..2.
+  - 14 `Sub_R{1,2}_*_Map` tables — keyed by `Plant|WC Object ID|Sub_Parent`; one map per (rank × field).
+  - `Temp_FinalLevers` — assembled via 6 CONCATENATE passes (pool pass + fallback pass for unaffected parents, sub_R1 pass, sub_R2 pass, each for pool and fallback sources).
+  - `Temp_FinalLeversRanked` — re-ranked by `Order_Key ASC`; 40 position maps (8 fields × 5 ranks) written then all intermediates dropped.
+
 **Final `InsightRecords` schema** (both main + reason rows):
 ```
 Insight_ID, Plant, WC Object ID, Plant - WC, Department, Period_Start,
