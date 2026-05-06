@@ -920,11 +920,12 @@ LOAD
     "WC Object ID",
     Die,
     MROClass,
+    MaterialDescription,
     Count(1)                                                                                    as L1_SetupRunCount,
     FRACTILE(If(SetupCount   > 0, SetupHours / SetupCount,  Null()), 0.25)                      as L1_BSP_SetupHrsPerEvent
-RESIDENT JobFact_Job_BSP
+RESIDENT JobFact_Job_BSP_L2
 WHERE SetupCount > 0 AND Not IsNull(MROClass)
-GROUP BY Plant, "WC Object ID", Die, MROClass;
+GROUP BY Plant, "WC Object ID", Die, MROClass, MaterialDescription;
 
 BSP_Setup_L1:
 NoConcatenate
