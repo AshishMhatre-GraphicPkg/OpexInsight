@@ -23,7 +23,15 @@ def _make_env() -> Environment:
     )
 
 
+def _comma_int(value) -> str:
+    try:
+        return f"{float(value):,.0f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
 _env = _make_env()
+_env.filters["comma_int"] = _comma_int
 
 
 def render_html(digest: ManagerDigest, subject: str) -> str:

@@ -86,11 +86,77 @@ class MachineSummary:
 
 
 @dataclass
+class MoverRow:
+    plant_wc: str
+    total_sheet_impact: float
+    top_lever: str | None
+
+
+@dataclass
+class OverviewSummary:
+    total_sheets: float
+    machines_impacted: int
+    top_driver_name: str | None
+    top_driver_sheets: float | None
+    top_movers: list[MoverRow]
+    maint_open: int
+    maint_priority10: int
+    maint_overdue_pm: int
+
+    @property
+    def has_maintenance(self) -> bool:
+        return self.maint_open > 0 or self.maint_priority10 > 0 or self.maint_overdue_pm > 0
+
+
+@dataclass
 class ManagerDigest:
     manager_email: str
     cc_list: str | None
     period_start: str
     machines: list[MachineSummary] = field(default_factory=list)
+    overview: OverviewSummary | None = None
+
+
+def _build_overview(machines: list) -> OverviewSummary:
+    total_sheets = sum(m.total_sheet_impact for m in machines)
+    machines_impacted = sum(1 for m in machines if m.total_sheet_impact > 0)
+
+    lever_totals: dict[str, float] = {}
+    for m in machines:
+        if m.levers:
+            lv = m.levers[0]
+            lever_totals[lv.name] = lever_totals.get(lv.name, 0.0) + lv.sheets
+    if lever_totals:
+        top_driver_name = max(lever_totals, key=lambda k: lever_totals[k])
+        top_driver_sheets: float | None = lever_totals[top_driver_name]
+    else:
+        top_driver_name = None
+        top_driver_sheets = None
+
+    top_movers = [
+        MoverRow(
+            plant_wc=m.plant_wc,
+            total_sheet_impact=m.total_sheet_impact,
+            top_lever=m.levers[0].name if m.levers else None,
+        )
+        for m in machines
+        if m.total_sheet_impact > 0
+    ]
+
+    maint_open = sum(m.findings.total_open for m in machines if m.findings)
+    maint_p10 = sum(m.findings.high_priority_count for m in machines if m.findings)
+    maint_pm = sum(m.pm_summary.total_overdue for m in machines if m.pm_summary)
+
+    return OverviewSummary(
+        total_sheets=total_sheets,
+        machines_impacted=machines_impacted,
+        top_driver_name=top_driver_name,
+        top_driver_sheets=top_driver_sheets,
+        top_movers=top_movers,
+        maint_open=maint_open,
+        maint_priority10=maint_p10,
+        maint_overdue_pm=maint_pm,
+    )
 
 
 def _nan_to_none(val):
@@ -197,6 +263,7 @@ def group_by_manager(
                 cc_list=str(cc) if cc else None,
                 period_start=period,
                 machines=machines,
+                overview=_build_overview(machines),
             )
         )
 

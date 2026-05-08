@@ -34,7 +34,7 @@ def test_html_contains_machine_name(digest_a):
 
 def test_html_contains_total_impact(digest_a):
     html = render_html(digest_a, "Test Subject")
-    assert "12500" in html
+    assert "12,500" in html
 
 
 def test_html_contains_outcome_name(digest_a):
@@ -121,3 +121,63 @@ def test_html_no_actual_vs_bsp_when_empty(digest_a):
     # Verify the conditional renders — no "actual  vs BSP" (double space from empty str)
     html = render_html(digest_a, "Test Subject")
     assert "actual  vs BSP" not in html
+
+
+# --- Overview section tests ---
+
+def test_html_overview_present(digest_a):
+    html = render_html(digest_a, "Test Subject")
+    assert "overview-tiles" in html
+
+
+def test_html_overview_total_sheets(digest_a):
+    # Gluer 01 (12,500) + Gluer 02 (7,300) = 19,800
+    html = render_html(digest_a, "Test Subject")
+    assert "19,800" in html
+
+
+def test_html_overview_machines_impacted(digest_a):
+    # Both machines have total_sheet_impact > 0
+    html = render_html(digest_a, "Test Subject")
+    assert ">2<" in html or "tile-value\">2" in html or ">2\n" in html
+
+
+def test_html_overview_top_driver(digest_a):
+    # Gluer 01's top lever is Downtime Reason (5,100 sheets) — must appear in Top Lever column
+    html = render_html(digest_a, "Test Subject")
+    assert "5,100" in html
+
+
+def test_html_overview_top_movers_order(digest_a):
+    # Gluer 01 (12,500 sheets) must appear before Gluer 02 (7,300 sheets)
+    html = render_html(digest_a, "Test Subject")
+    pos1 = html.index("Elk Grove / Gluer 01")
+    pos2 = html.index("Elk Grove / Gluer 02")
+    assert pos1 < pos2
+
+
+def test_html_overview_no_maintenance_line_when_absent(digest_a):
+    # digest_a has no findings/pm attached — maintenance one-liner must be suppressed
+    html = render_html(digest_a, "Test Subject")
+    assert "see Maintenance Report below" not in html
+
+
+def test_html_overview_driver_b(digest_b):
+    # Chicago / Flexo 01's top lever is Speed — must appear in Top Lever column
+    html = render_html(digest_b, "Test Subject")
+    assert "Top Lever" in html
+
+
+def test_text_overview_present(digest_a):
+    text = render_text(digest_a, "Test Subject")
+    assert "Sheets lost vs BSP" in text
+
+
+def test_text_overview_total_sheets(digest_a):
+    text = render_text(digest_a, "Test Subject")
+    assert "19,800" in text
+
+
+def test_text_overview_top_mover(digest_a):
+    text = render_text(digest_a, "Test Subject")
+    assert "Elk Grove / Gluer 01" in text

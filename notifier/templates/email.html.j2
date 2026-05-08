@@ -28,12 +28,71 @@
   .maint-count { text-align: right; }
   .maint-total-row td { border-top: 2px solid #ccc; font-weight: bold; }
   .footer { margin-top: 32px; font-size: 12px; color: #888; border-top: 1px solid #ddd; padding-top: 8px; }
+  .overview-tiles { border-collapse: separate; border-spacing: 12px 0; margin: 12px 0 16px; }
+  .tile { background: #f0f4fa; border-radius: 6px; padding: 10px 20px; text-align: center; min-width: 120px; }
+  .tile-value { font-size: 1.4em; font-weight: bold; color: #003366; }
+  .tile-label { font-size: 0.8em; color: #555; margin-top: 2px; }
+  .movers-table { border-collapse: collapse; width: 100%; max-width: 500px; font-size: 0.93em; margin-bottom: 12px; }
+  .movers-table th { background: #e8eef6; color: #003366; text-align: left; padding: 5px 8px; }
+  .movers-table td { padding: 4px 8px; border-bottom: 1px solid #eee; }
+  .movers-count { text-align: center; }
+  .maint-line { font-size: 0.9em; color: #664d00; background: #fffbf0; border-left: 3px solid #f0ad00; padding: 6px 10px; margin-top: 8px; }
 </style>
 </head>
 <body>
 
 <h2>{{ subject }}</h2>
-<p>Week of <strong>{{ digest.period_start }}</strong></p>
+
+{% if digest.overview %}
+{% set ov = digest.overview %}
+<table class="overview-tiles">
+  <tr>
+    <td class="tile">
+      <div class="tile-value">{{ ov.total_sheets | comma_int }}</div>
+      <div class="tile-label">Sheets lost vs BSP</div>
+    </td>
+    <td class="tile">
+      <div class="tile-value">{{ ov.machines_impacted }}</div>
+      <div class="tile-label">Machines impacted</div>
+    </td>
+    {% if ov.top_driver_name %}
+    <td class="tile">
+      <div class="tile-value">{{ ov.top_driver_name }}</div>
+      <div class="tile-label">Top driver ({{ ov.top_driver_sheets | comma_int }} sheets)</div>
+    </td>
+    {% endif %}
+  </tr>
+</table>
+
+{% if ov.top_movers %}
+<table class="movers-table">
+  <thead>
+    <tr>
+      <th>Machine</th>
+      <th class="movers-count">Sheets Lost vs BSP OEE ▼</th>
+      <th>Top Lever</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in ov.top_movers %}
+    <tr>
+      <td>{{ row.plant_wc }}</td>
+      <td class="movers-count">{{ row.total_sheet_impact | comma_int }}</td>
+      <td>{{ row.top_lever if row.top_lever else '&mdash;' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if ov.has_maintenance %}
+<p class="maint-line">
+  Maintenance: <strong>{{ ov.maint_open }}</strong> open findings
+  {%- if ov.maint_priority10 %} (<strong>{{ ov.maint_priority10 }}</strong> priority-10){%- endif %},
+  <strong>{{ ov.maint_overdue_pm }}</strong> PMs overdue &mdash; see Maintenance Report below.
+</p>
+{% endif %}
+{% endif %}
 
 {% set maint_machines = digest.machines | selectattr('findings') | list %}
 {% set pm_machines = digest.machines | selectattr('pm_summary') | list %}
