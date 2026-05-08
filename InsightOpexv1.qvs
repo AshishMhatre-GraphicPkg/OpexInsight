@@ -514,6 +514,7 @@ LOAD
     RunHours,
     DownHours,
     SetupHours,
+    SetupDownHours,
     SetupCount,
     GoodQty_OEE,
     ScrapQty_OEE,
