@@ -759,8 +759,8 @@ LOAD
     Count(1)                                                                                    as L1_RunCount,
     FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.75)                  as L1_BSP_OEE,
     FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.75)                  as L1_BSP_Speed,
-    FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.25)                  as L1_BSP_DowntimePct,
-    FRACTILE(DownHours,                                                   0.25)                  as L1_BSP_DowntimeHrs,
+    FRACTILE(If(SchedHours   > 0, (DownHours + SetupDownHours) / SchedHours, Null()), 0.25)     as L1_BSP_DowntimePct,
+    FRACTILE(DownHours + SetupDownHours,                                      0.25)              as L1_BSP_DowntimeHrs,
     FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.25)                  as L1_BSP_ScrapRate
 RESIDENT JobFact_Job_BSP
 GROUP BY Plant, "WC Object ID", Die;
@@ -789,8 +789,8 @@ LOAD
     Count(1)                                                                                    as L2_RunCount,
     FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.75)                  as L2_BSP_OEE,
     FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.75)                  as L2_BSP_Speed,
-    FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.25)                  as L2_BSP_DowntimePct,
-    FRACTILE(DownHours,                                                   0.25)                  as L2_BSP_DowntimeHrs,
+    FRACTILE(If(SchedHours   > 0, (DownHours + SetupDownHours) / SchedHours, Null()), 0.25)     as L2_BSP_DowntimePct,
+    FRACTILE(DownHours + SetupDownHours,                                      0.25)              as L2_BSP_DowntimeHrs,
     FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.25)                  as L2_BSP_ScrapRate
 RESIDENT JobFact_Job_BSP_L2
 WHERE Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
@@ -816,8 +816,8 @@ LOAD
     Count(1)                                                                                    as L3_RunCount,
     FRACTILE(If(OEE_Denom    > 0, GoodQty_OEE  / OEE_Denom,    Null()), 0.75)                  as L3_BSP_OEE,
     FRACTILE(If(RunHours     > 0, TotalQty_OEE / RunHours,      Null()), 0.75)                  as L3_BSP_Speed,
-    FRACTILE(If(SchedHours   > 0, DownHours     / SchedHours,   Null()), 0.25)                  as L3_BSP_DowntimePct,
-    FRACTILE(DownHours,                                                   0.25)                  as L3_BSP_DowntimeHrs,
+    FRACTILE(If(SchedHours   > 0, (DownHours + SetupDownHours) / SchedHours, Null()), 0.25)     as L3_BSP_DowntimePct,
+    FRACTILE(DownHours + SetupDownHours,                                      0.25)              as L3_BSP_DowntimeHrs,
     FRACTILE(If(TotalQty_OEE > 0, ScrapQty_OEE / TotalQty_OEE, Null()), 0.25)                  as L3_BSP_ScrapRate
 RESIDENT JobFact_Job_BSP
 GROUP BY Plant, "WC Object ID";
@@ -1576,8 +1576,8 @@ LOAD
     If(Sum(Perf_Denom)   > 0, Sum(TotalQty_OEE) / Sum(Perf_Denom),   Null())                   as Wk_Performance,
     If(Sum(TotalQty_OEE) > 0, Sum(GoodQty_OEE)  / Sum(TotalQty_OEE), Null())                   as Wk_Quality,
     If(Sum(RunHours)     > 0, Sum(TotalQty_OEE) / Sum(RunHours),      Null())                   as Wk_Speed,
-    If(Sum(SchedHours)   > 0, Sum(DownHours)     / Sum(SchedHours),   Null())                   as Wk_DowntimePct,
-    Sum(DownHours)                                                                               as Wk_DowntimeHrs,
+    If(Sum(SchedHours)   > 0, (Sum(DownHours) + Sum(SetupDownHours)) / Sum(SchedHours), Null())  as Wk_DowntimePct,
+    Sum(DownHours) + Sum(SetupDownHours)                                                         as Wk_DowntimeHrs,
     If(Sum(TotalQty_OEE) > 0, Sum(ScrapQty_OEE) / Sum(TotalQty_OEE), Null())                   as Wk_ScrapRate,
     If(Sum(SetupCount)   > 0, Sum(SetupHours)    / Sum(SetupCount),   Null())                   as Wk_SetupHrsPerEvent,
     If(Sum(BlanketWashEvents) > 0, Sum(BlanketWashHours) / Sum(BlanketWashEvents), Null())       as Wk_BlanketWashTime,

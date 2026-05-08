@@ -90,7 +90,7 @@ Per-reason `Streak_4wk` (range 0–4) is the count of weeks in the last 4 full w
 
   **Sheet_Gap formulas (in sheets lost vs BSP):**
   - **OEE**: `(BSP_OEE − Cur_OEE) × Cur_SchedHours × Cur_MaxSpeed` — uses `Cur_MaxSpeed` (OEM Speed or Max Gluer CPH), not BSP Speed, because OEE denominator is SchedHours × MaxSpeed
-  - **Downtime %**: `(Cur_DTPct − BSP_DTPct) × Cur_SchedHours × Cur_BSP_Speed`
+  - **Downtime %**: `(Cur_DTPct − BSP_DTPct) × Cur_SchedHours × Cur_BSP_Speed` — numerator is `(DownHours + SetupDownHours) / SchedHours` at all levels (current + L1/L2/L3 BSP). Setup Down counts as machine downtime per plant definition `(Time − Down) + (Time − Setup Down)`. Reason-level DT (`L*_BSP_ReasonDownPct`) is unchanged — reason codes attribute only `DownHours`; Setup Down is its own bucket.
   - **Scrap Rate**: `(Cur_ScrapRate − BSP_ScrapRate) × Cur_RunHours × Cur_BSP_Speed` — RunHours (not SchedHours) because scrap only accumulates during production
   - **Speed**: `(BSP_Speed − Cur_Speed) × Cur_RunHours` — sheets directly, speed deficit × run hours
   - **Avg MR Time**: `(Cur_SetupHrsPerEvent − BSP_SetupHrsPerEvent) × Cur_SetupEventCount × Cur_BSP_Speed` — excess duration × actual event count × speed
