@@ -25,20 +25,26 @@ _COL_O1_NAME = "Outcome_1_Name"
 _COL_O1_SHEETS = "Outcome_1_Sheets"
 _COL_DRIVER_PARENT = "Driver_Parent_Name"
 _COL_DRIVER_SHEETS = "Driver_Parent_Sheets"
+_COL_OUTCOME1_CUR = "Outcome_1_Cur_Actual"
+_COL_OUTCOME1_BSP = "Outcome_1_BSP_Benchmark"
+
+_OVERVIEW_LEVER_LABELS = {"Downtime Reason": "Downtime"}
 
 _LEVER_FIELDS = ("Name", "Reasons", "Sheets", "Gap_Pct", "Streak", "Parent_Outcome", "Cur_Actual", "BSP_Benchmark")
 
 _PERCENT_LEVERS = {
     "OEE",
     "Downtime %", "Scrap Rate",
-    "Downtime Reason", "Scrap Reason",
+    "Downtime Reason",
 }
 
 _LOWER_IS_BETTER_LEVERS = {
     "Downtime %", "Scrap Rate", "Avg MR Time",
-    "Downtime Reason", "Scrap Reason",
+    "Downtime Reason",
     "Avg Blanket Wash Time", "Avg Feeder Trip Time",
 }
+
+_TIME_HOURS_LEVERS = {"Avg MR Time", "Avg Blanket Wash Time", "Avg Feeder Trip Time"}
 
 
 def _format_kpi_value(name: str, val) -> str:
@@ -50,6 +56,10 @@ def _format_kpi_value(name: str, val) -> str:
         return str(val)
     if name in _PERCENT_LEVERS:
         return f"{v * 100:.2f}%"
+    if name in _TIME_HOURS_LEVERS:
+        return f"{v * 60:,.0f} Mins"
+    if name == "Speed":
+        return f"{v:,.0f}"
     return f"{v:,.2f}"
 
 
@@ -78,6 +88,8 @@ class MachineSummary:
     total_sheet_impact: float
     outcome_1: str | None
     outcome_1_sheets: float | None
+    outcome_1_cur_actual: float | None = None
+    outcome_1_bsp_benchmark: float | None = None
     driver_parent: str | None = None
     driver_parent_sheets: float | None = None
     levers: list[LeverSummary] = field(default_factory=list)
@@ -90,6 +102,8 @@ class MoverRow:
     plant_wc: str
     total_sheet_impact: float
     top_lever: str | None
+    cur_oee: float | None = None
+    bsp_oee: float | None = None
 
 
 @dataclass
@@ -137,7 +151,9 @@ def _build_overview(machines: list) -> OverviewSummary:
         MoverRow(
             plant_wc=m.plant_wc,
             total_sheet_impact=m.total_sheet_impact,
-            top_lever=m.levers[0].name if m.levers else None,
+            top_lever=_OVERVIEW_LEVER_LABELS.get(m.levers[0].name, m.levers[0].name) if m.levers else None,
+            cur_oee=m.outcome_1_cur_actual,
+            bsp_oee=m.outcome_1_bsp_benchmark,
         )
         for m in machines
         if m.total_sheet_impact > 0
@@ -171,7 +187,7 @@ def _build_levers(row: pd.Series) -> list[LeverSummary]:
         name = _nan_to_none(row.get(f"Lever_{i}_Name"))
         if name is None:
             break
-        lever_name = str(name)
+        lever_name = str(name).strip()
         levers.append(
             LeverSummary(
                 name=lever_name,
@@ -241,6 +257,8 @@ def group_by_manager(
 
             driver_parent = _nan_to_none(row.get(_COL_DRIVER_PARENT))
             driver_sheets_raw = row.get(_COL_DRIVER_SHEETS)
+            cur_actual_raw = _nan_to_none(row.get(_COL_OUTCOME1_CUR))
+            bsp_raw = _nan_to_none(row.get(_COL_OUTCOME1_BSP))
             machines.append(
                 MachineSummary(
                     plant_wc=str(row[_COL_PLANT_WC]),
@@ -249,6 +267,8 @@ def group_by_manager(
                     total_sheet_impact=float(row.get(_COL_TOTAL, 0) or 0),
                     outcome_1=_nan_to_none(row.get(_COL_O1_NAME)),
                     outcome_1_sheets=float(row[_COL_O1_SHEETS]) if _nan_to_none(row.get(_COL_O1_SHEETS)) is not None else None,
+                    outcome_1_cur_actual=float(cur_actual_raw) if cur_actual_raw is not None else None,
+                    outcome_1_bsp_benchmark=float(bsp_raw) if bsp_raw is not None else None,
                     driver_parent=str(driver_parent) if driver_parent else None,
                     driver_parent_sheets=float(driver_sheets_raw) if _nan_to_none(driver_sheets_raw) is not None else None,
                     levers=levers,

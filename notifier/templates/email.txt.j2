@@ -13,14 +13,14 @@
 {% if ov.top_movers %}
 Top movers (sheets lost vs BSP OEE, descending):
 {% set col1 = 32 %}
-{{ "Machine".ljust(col1) }}| Sheets Lost  | Top Lever
-{{ "-" * col1 }}|--------------|------------------
+{{ "Machine".ljust(col1) }}| Cur OEE | BSP OEE | Sheets Lost  | Top Lever
+{{ "-" * col1 }}|---------|---------|--------------|------------------
 {% for row in ov.top_movers %}
-{{ row.plant_wc[:col1 - 1].ljust(col1) }}| {{ "%12s" | format(row.total_sheet_impact | comma_int) }} | {{ row.top_lever if row.top_lever else '-' }}
+{{ row.plant_wc[:col1 - 1].ljust(col1) }}| {{ "%7s" | format(row.cur_oee | percent if row.cur_oee is not none else '-') }} | {{ "%7s" | format(row.bsp_oee | percent if row.bsp_oee is not none else '-') }} | {{ "%12s" | format(row.total_sheet_impact | comma_int) }} | {{ row.top_lever if row.top_lever else '-' }}
 {% endfor %}
 {% endif %}
 {% if ov.has_maintenance %}
-Maintenance: {{ ov.maint_open }} open findings{% if ov.maint_priority10 %} ({{ ov.maint_priority10 }} priority-10){% endif %}, {{ ov.maint_overdue_pm }} PMs overdue — see Maintenance Report below.
+Maintenance: {{ ov.maint_open }} open {{ ov.maint_open | pluralize('finding') }}{% if ov.maint_priority10 %} ({{ ov.maint_priority10 }} priority-10){% endif %}, {{ ov.maint_overdue_pm }} {{ ov.maint_overdue_pm | pluralize('PM') }} overdue — see Maintenance Report below.
 {% endif %}
 {{ "=" * 60 }}
 
@@ -32,21 +32,19 @@ Maintenance: {{ ov.maint_open }} open findings{% if ov.maint_priority10 %} ({{ o
 MAINTENANCE REPORT
 {{ "-" * 60 }}
 {% set col1 = 28 %}
-{{ "Machine".ljust(col1) }}| Open | Missing WO | Overdue PM Procedures
-{{ "-" * col1 }}|------|-----------|----------------------
+{{ "Machine".ljust(col1) }}| GC Open | GC Missing WO | Overdue PM Procedures
+{{ "-" * col1 }}|---------|---------------|----------------------
 {% for m in all_maint_machines %}
-{{ m.plant_wc[:col1 - 1].ljust(col1) }}|  {{ "%3d" | format(m.findings.total_open if m.findings else 0) }} |    {{ "%3d" | format(m.findings.total_missing_wo if m.findings else 0) }}    |    {{ "%3d" | format(m.pm_summary.total_overdue if m.pm_summary else 0) }}
+{{ m.plant_wc[:col1 - 1].ljust(col1) }}|    {{ "%3d" | format(m.findings.total_open if m.findings else 0) }}    |         {{ "%3d" | format(m.findings.total_missing_wo if m.findings else 0) }}    |    {{ "%3d" | format(m.pm_summary.total_overdue if m.pm_summary else 0) }}
 {% endfor %}
-{{ "-" * col1 }}|------|-----------|----------------------
-{{ "TOTAL".ljust(col1) }}|  {{ "%3d" | format(all_maint_machines | selectattr('findings') | map(attribute='findings.total_open') | sum) }} |    {{ "%3d" | format(all_maint_machines | selectattr('findings') | map(attribute='findings.total_missing_wo') | sum) }}    |    {{ "%3d" | format(all_maint_machines | selectattr('pm_summary') | map(attribute='pm_summary.total_overdue') | sum) }}
+{{ "-" * col1 }}|---------|---------------|----------------------
+{{ "TOTAL".ljust(col1) }}|    {{ "%3d" | format(all_maint_machines | selectattr('findings') | map(attribute='findings.total_open') | sum) }}    |         {{ "%3d" | format(all_maint_machines | selectattr('findings') | map(attribute='findings.total_missing_wo') | sum) }}    |    {{ "%3d" | format(all_maint_machines | selectattr('pm_summary') | map(attribute='pm_summary.total_overdue') | sum) }}
 
 {% endif %}
 {% for m in digest.machines %}
 {{ m.plant_wc }} — {{ m.department }}
 {{ "-" * 40 }}
-{{ m.plant_wc }} lost {{ m.total_sheet_impact | comma_int }} sheets of OEE Impact this week
-{%- if m.driver_parent %}, driven primarily by {{ m.driver_parent }} ({{ m.driver_parent_sheets | comma_int }} sheets)
-{%- endif %}.
+{{ m.plant_wc }} lost {{ m.total_sheet_impact | comma_int }} sheets of OEE Impact this week.
 
 {% if m.levers %}
 Top levers to address:
@@ -57,8 +55,8 @@ Top levers to address:
 {% endif %}
 
 {% if m.findings %}
-Maintenance Findings:
-  Open: {{ m.findings.total_open }}  |  Missing WO: {{ m.findings.total_missing_wo }}  |  Overdue WOs: {{ m.findings.total_overdue }}{% if m.findings.high_priority_count %}  |  Priority-10: {{ m.findings.high_priority_count }}{% endif %}
+Graphic Care Findings:
+  Open: {{ m.findings.total_open }}  |  Missing WO: {{ m.findings.total_missing_wo }}  |  Overdue {{ m.findings.total_overdue | pluralize('WO') }}: {{ m.findings.total_overdue }}{% if m.findings.high_priority_count %}  |  Priority-10: {{ m.findings.high_priority_count }}{% endif %}
 
 {% for s in m.findings.by_section %}
   - {{ s.section }}: {{ s.open_count }} Open{% if s.missing_wo_count %}, {{ s.missing_wo_count }} Missing WO{% endif %}{% if s.overdue_count %}, {{ s.overdue_count }} Overdue{% endif %}{% if s.is_corroborated %} [linked to active lever]{% endif %}

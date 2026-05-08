@@ -30,8 +30,29 @@ def _comma_int(value) -> str:
         return str(value)
 
 
+def _percent(value) -> str:
+    if value is None:
+        return "—"
+    try:
+        return f"{float(value) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _pluralize(count, singular: str, plural: str | None = None) -> str:
+    """Return singular or plural word based on count."""
+    if plural is None:
+        plural = singular + "s"
+    try:
+        return singular if int(float(count)) == 1 else plural
+    except (TypeError, ValueError):
+        return plural
+
+
 _env = _make_env()
 _env.filters["comma_int"] = _comma_int
+_env.filters["percent"] = _percent
+_env.filters["pluralize"] = _pluralize
 
 
 def render_html(digest: ManagerDigest, subject: str) -> str:

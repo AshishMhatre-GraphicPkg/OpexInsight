@@ -219,14 +219,6 @@ LOAD
 FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - TimeReasonCodes.qvd]
 (qvd);
 
-ScrapReasonCodes:
-NoConcatenate
-LOAD
-    "Scrap Plant Reason Key"    as sPltRsnKey,
-    "Scrap Reason"
-FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - ScrapReasonCodes.qvd]
-(qvd);
-
 // Mapping tables for resolving reason keys to human-readable names in Step 6
 // Dropped at end of Section 47 after InsightRecords is built.
 TimeReason_Name_Map:
@@ -235,14 +227,6 @@ MAPPING LOAD
     "Time Reason"
 FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - TimeReasonCodes.qvd]
 (qvd);
-
-ScrapReason_Name_Map:
-MAPPING LOAD
-    "Scrap Plant Reason Key",
-    "Scrap Reason"
-FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - ScrapReasonCodes.qvd]
-(qvd);
-
 
 // ============================================================
 // SECTION 6: SUPPLEMENTARY DIMENSION — CARTON CATEGORY
@@ -432,8 +416,7 @@ LOAD
     BlanketWashHours,
     BlanketWashEvents,
     FeederTripHours,
-    FeederTripEvents,
-    If(SetupCount > 0, (GoodQty_OEE + ScrapQty_OEE) / SetupCount, Null())                      as ARQ
+    FeederTripEvents
 RESIDENT JobFact_Job_BSP_Agg
 WHERE RunHours > 2;
 
@@ -557,8 +540,7 @@ LOAD
     BlanketWashHours,
     BlanketWashEvents,
     FeederTripHours,
-    FeederTripEvents,
-    If(SetupCount > 0, (GoodQty_OEE + ScrapQty_OEE) / SetupCount, Null())                      as ARQ
+    FeederTripEvents
 RESIDENT JobFact_Job_BSP_L2_Agg;
 
 DROP TABLE JobFact_Job_BSP_L2_Agg;
@@ -625,65 +607,6 @@ RESIDENT JobFact_DownReason_BSP_Agg;
 
 DROP TABLE JobFact_DownReason_BSP_Agg;
 
-
-// ============================================================
-// SECTION 13: PASS 3B — SCRAP REASON GRAIN AGGREGATION
-// Window  : v2YearStart to last completed week
-// Filter  : Qualifying runs only via QualifyingRuns_Map
-//           Rows with null Scrap Plant Reason Key excluded
-// ============================================================
-
-JobFact_ScrapReason_BSP_Agg:
-NoConcatenate
-LOAD
-    Date,
-    "WC Object ID",
-    Die,
-    "Shift Code",
-    "Plant Material Key"                                                                        as PltMatKey,
-    Only("Carton Style")                                                                        as CartonStyle,
-    Max(NumberUp)                                                                               as NumberUp,
-    "Scrap Plant Reason Key",
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM", 0))                         as ReasonScrapQty
-RESIDENT JobFact_Raw
-WHERE
-    Date >= $(v2YearStart)
-    AND Date < $(vCurrentWeekStart)
-    AND Not IsNull("Scrap Plant Reason Key")
-    AND ApplyMap('QualifyingRuns_Map',
-            Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die, 0) = 1
-GROUP BY
-    Date,
-    "WC Object ID",
-    Die,
-    "Shift Code",
-    "Plant Material Key",
-    "Scrap Plant Reason Key";
-
-JobFact_ScrapReason_BSP:
-NoConcatenate
-LOAD
-    "WC Object ID",
-    Die,
-    PltMatKey,
-    CartonStyle,
-    NumberUp,
-    "Scrap Plant Reason Key",
-    ReasonScrapQty,
-    ApplyMap('TotalQty_Map',
-        Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die, Null())                  as TotalQty_OEE,
-    ApplyMap('Plant_Map',      "WC Object ID", 'Unknown')                                       as Plant,
-    ApplyMap('Department_Map', "WC Object ID", 'Unknown')                                       as Department,
-    If(Match(ApplyMap('Department_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
-            Text(CartonStyle),
-        If(Match(ApplyMap('Department_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
-            Text(NumberUp),
-           ''))                                                                                 as L2_ExtraDim,
-    ApplyMap('BoardTypeGroup_Map', ApplyMap('BoardType_Map', PltMatKey, Null()), Null())         as "Board Type Group",
-    ApplyMap('BoardCaliper_Map',   ApplyMap('Material_Map',  PltMatKey, Null()), Null())         as "Board Caliper"
-RESIDENT JobFact_ScrapReason_BSP_Agg;
-
-DROP TABLE JobFact_ScrapReason_BSP_Agg;
 
 DROP MAPPING TABLE QualifyingRuns_Map;
 DROP MAPPING TABLE SchedHours_Map;
@@ -1069,86 +992,6 @@ DROP TABLE JobFact_DownReason_BSP;
 
 
 // ============================================================
-// SECTION 26: SCRAP REASON BSP — LEVEL 1
-// Grain  : Plant + WC Object ID + Die + Scrap Plant Reason Key
-// Metric : P10 of ReasonScrapQty / TotalQty_OEE per reason
-// Min    : 10 qualifying job runs with this reason
-// Field kept as original name — NOT aliased to sPltRsnKey
-// to avoid unwanted join to ScrapReasonCodes in data model
-// ============================================================
-
-BSP_ScrapReason_L1_Raw:
-NoConcatenate
-LOAD
-    Plant,
-    "WC Object ID",
-    Die,
-    "Scrap Plant Reason Key",
-    Count(1)                                                                                    as L1_ScrRsnCount,
-    FRACTILE(If(TotalQty_OEE > 0, ReasonScrapQty / TotalQty_OEE, Null()), 0.25)                as L1_BSP_ReasonScrapPct
-RESIDENT JobFact_ScrapReason_BSP
-GROUP BY Plant, "WC Object ID", Die, "Scrap Plant Reason Key";
-
-BSP_ScrapReason_L1:
-NoConcatenate
-LOAD * RESIDENT BSP_ScrapReason_L1_Raw WHERE L1_ScrRsnCount >= $(vBSP_L1_Min);
-DROP TABLE BSP_ScrapReason_L1_Raw;
-
-
-// ============================================================
-// SECTION 27: SCRAP REASON BSP — LEVEL 2
-// Grain  : Plant + WC Object ID + Board Type Group +
-//          Board Caliper + Scrap Plant Reason Key
-// Min    : 20 qualifying runs
-// ============================================================
-
-BSP_ScrapReason_L2_Raw:
-NoConcatenate
-LOAD
-    Plant,
-    "WC Object ID",
-    "Board Type Group",
-    "Board Caliper",
-    L2_ExtraDim,
-    "Scrap Plant Reason Key",
-    Count(1)                                                                                    as L2_ScrRsnCount,
-    FRACTILE(If(TotalQty_OEE > 0, ReasonScrapQty / TotalQty_OEE, Null()), 0.25)                as L2_BSP_ReasonScrapPct
-RESIDENT JobFact_ScrapReason_BSP
-WHERE Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
-GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim, "Scrap Plant Reason Key";
-
-BSP_ScrapReason_L2:
-NoConcatenate
-LOAD * RESIDENT BSP_ScrapReason_L2_Raw WHERE L2_ScrRsnCount >= $(vBSP_L2_Min);
-DROP TABLE BSP_ScrapReason_L2_Raw;
-
-
-// ============================================================
-// SECTION 28: SCRAP REASON BSP — LEVEL 3
-// Grain  : Plant + WC Object ID + Scrap Plant Reason Key
-// Min    : 30 qualifying runs
-// ============================================================
-
-BSP_ScrapReason_L3_Raw:
-NoConcatenate
-LOAD
-    Plant,
-    "WC Object ID",
-    "Scrap Plant Reason Key",
-    Count(1)                                                                                    as L3_ScrRsnCount,
-    FRACTILE(If(TotalQty_OEE > 0, ReasonScrapQty / TotalQty_OEE, Null()), 0.25)                as L3_BSP_ReasonScrapPct
-RESIDENT JobFact_ScrapReason_BSP
-GROUP BY Plant, "WC Object ID", "Scrap Plant Reason Key";
-
-BSP_ScrapReason_L3:
-NoConcatenate
-LOAD * RESIDENT BSP_ScrapReason_L3_Raw WHERE L3_ScrRsnCount >= $(vBSP_L3_Min);
-DROP TABLE BSP_ScrapReason_L3_Raw;
-
-DROP TABLE JobFact_ScrapReason_BSP;
-
-
-// ============================================================
 // SECTION 29A: AVG BLANKET WASH TIME BSP — ALL 3 LEVELS
 // Metric : BlanketWashHours / BlanketWashEvents (hrs per event)
 // Direction : lower-is-better (P25)
@@ -1277,71 +1120,6 @@ LOAD * RESIDENT BSP_FeederTripTime_L3_Raw WHERE FTT_L3_Count >= $(vBSP_L3_Min);
 DROP TABLE BSP_FeederTripTime_L3_Raw;
 
 
-// ============================================================
-// SECTION 29C: ARQ (AVG RUN QUANTITY) BSP — ALL 3 LEVELS
-// Metric : TotalQty_OEE / SetupCount (sheets per setup)
-// Direction : higher-is-better (P75)
-// L1 grain : Plant + WC + Die + MaterialDescription
-// L2 grain : Plant + WC + BTG + BC + L2_ExtraDim
-// L3 grain : Plant + WC
-// ============================================================
-
-BSP_ARQ_L1_Raw:
-NoConcatenate
-LOAD
-    Plant,
-    "WC Object ID",
-    Die,
-    MaterialDescription,
-    Count(1)                                                                                      as ARQ_L1_Count,
-    FRACTILE(ARQ, 0.75)                                                                           as L1_BSP_ARQ
-RESIDENT JobFact_Job_BSP_L2
-WHERE Not IsNull(ARQ) AND Not IsNull(MaterialDescription)
-GROUP BY Plant, "WC Object ID", Die, MaterialDescription;
-
-BSP_ARQ_L1:
-NoConcatenate
-LOAD * RESIDENT BSP_ARQ_L1_Raw WHERE ARQ_L1_Count >= $(vBSP_L1_Min);
-DROP TABLE BSP_ARQ_L1_Raw;
-
-
-BSP_ARQ_L2_Raw:
-NoConcatenate
-LOAD
-    Plant,
-    "WC Object ID",
-    "Board Type Group",
-    "Board Caliper",
-    L2_ExtraDim,
-    Count(1)                                                                                      as ARQ_L2_Count,
-    FRACTILE(ARQ, 0.75)                                                                           as L2_BSP_ARQ
-RESIDENT JobFact_Job_BSP_L2
-WHERE Not IsNull(ARQ)
-    AND Not IsNull("Board Type Group") AND Not IsNull("Board Caliper")
-GROUP BY Plant, "WC Object ID", "Board Type Group", "Board Caliper", L2_ExtraDim;
-
-BSP_ARQ_L2:
-NoConcatenate
-LOAD * RESIDENT BSP_ARQ_L2_Raw WHERE ARQ_L2_Count >= $(vBSP_L2_Min);
-DROP TABLE BSP_ARQ_L2_Raw;
-
-
-BSP_ARQ_L3_Raw:
-NoConcatenate
-LOAD
-    Plant,
-    "WC Object ID",
-    Count(1)                                                                                      as ARQ_L3_Count,
-    FRACTILE(ARQ, 0.75)                                                                           as L3_BSP_ARQ
-RESIDENT JobFact_Job_BSP_L2
-WHERE Not IsNull(ARQ)
-GROUP BY Plant, "WC Object ID";
-
-BSP_ARQ_L3:
-NoConcatenate
-LOAD * RESIDENT BSP_ARQ_L3_Raw WHERE ARQ_L3_Count >= $(vBSP_L3_Min);
-DROP TABLE BSP_ARQ_L3_Raw;
-
 DROP TABLE JobFact_Job_BSP;
 DROP TABLE JobFact_Job_BSP_L2;
 
@@ -1362,9 +1140,6 @@ DROP TABLE JobFact_Job_BSP_L2;
 //   L1 DwnRsn  : Plant|WCObjectID|Die|TimeReasonKey
 //   L2 DwnRsn  : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|TimeReasonKey
 //   L3 DwnRsn  : Plant|WCObjectID|TimeReasonKey
-//   L1 ScrRsn  : Plant|WCObjectID|Die|ScrapReasonKey
-//   L2 ScrRsn  : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|ScrapReasonKey
-//   L3 ScrRsn  : Plant|WCObjectID|ScrapReasonKey
 // ============================================================
 
 BSP_L1_OEE_Map:
@@ -1482,25 +1257,6 @@ RESIDENT BSP_DownReason_L3;
 
 DROP TABLE BSP_DownReason_L3;
 
-BSP_L1_ScrRsn_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die & '|' & [Scrap Plant Reason Key], L1_BSP_ReasonScrapPct
-RESIDENT BSP_ScrapReason_L1;
-
-DROP TABLE BSP_ScrapReason_L1;
-
-BSP_L2_ScrRsn_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim & '|' & [Scrap Plant Reason Key], L2_BSP_ReasonScrapPct
-RESIDENT BSP_ScrapReason_L2;
-
-DROP TABLE BSP_ScrapReason_L2;
-
-BSP_L3_ScrRsn_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Scrap Plant Reason Key], L3_BSP_ReasonScrapPct
-RESIDENT BSP_ScrapReason_L3;
-
-DROP TABLE BSP_ScrapReason_L3;
-
-
 // ============================================================
 // SECTION 29C: AVG BLANKET WASH TIME BSP MAPPING TABLES
 // ============================================================
@@ -1540,26 +1296,6 @@ MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_FeederTripTime
 RESIDENT BSP_FeederTripTime_L3;
 DROP TABLE BSP_FeederTripTime_L3;
 
-
-// ============================================================
-// SECTION 29E: ARQ BSP MAPPING TABLES
-// L1 key includes MaterialDescription for finer-grain BSP
-// ============================================================
-
-BSP_L1_ARQ_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & Die & '|' & MaterialDescription, L1_BSP_ARQ
-RESIDENT BSP_ARQ_L1;
-DROP TABLE BSP_ARQ_L1;
-
-BSP_L2_ARQ_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' & L2_ExtraDim, L2_BSP_ARQ
-RESIDENT BSP_ARQ_L2;
-DROP TABLE BSP_ARQ_L2;
-
-BSP_L3_ARQ_Map:
-MAPPING LOAD Plant & '|' & [WC Object ID], L3_BSP_ARQ
-RESIDENT BSP_ARQ_L3;
-DROP TABLE BSP_ARQ_L3;
 
 
 // ============================================================
@@ -1690,13 +1426,6 @@ LOAD
                 If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
         ApplyMap('BSP_L3_FeederTripTime_Map',  Plant & '|' & [WC Object ID], Null()))             as Die_BSP_FeederTripTime,
 
-    Coalesce(
-        ApplyMap('BSP_L1_ARQ_Map', Plant & '|' & [WC Object ID] & '|' & Die & '|' & MaterialDescription, Null()),
-        ApplyMap('BSP_L2_ARQ_Map', Plant & '|' & [WC Object ID] & '|' & [Board Type Group] & '|' & [Board Caliper] & '|' &
-            If(Match(Department, 'Gluer', 'Window'), Text(CartonStyle),
-                If(Match(Department, 'Sheetfed Cutting', 'Web Cutting'), Text(NumberUp), '')), Null()),
-        ApplyMap('BSP_L3_ARQ_Map', Plant & '|' & [WC Object ID], Null()))                         as Die_BSP_ARQ,
-
     // Confidence level for OEE used as proxy for all main KPIs
     // 3 = HIGH (L1 resolved), 2 = MEDIUM (L2), 1 = LOW (L3), 0 = NONE
     If(Not IsNull(ApplyMap('BSP_L1_OEE_Map', Plant & '|' & [WC Object ID] & '|' & Die, Null())), 3,
@@ -1753,9 +1482,6 @@ DROP MAPPING TABLE BSP_L3_BlanketWashTime_Map;
 DROP MAPPING TABLE BSP_L1_FeederTripTime_Map;
 DROP MAPPING TABLE BSP_L2_FeederTripTime_Map;
 DROP MAPPING TABLE BSP_L3_FeederTripTime_Map;
-DROP MAPPING TABLE BSP_L1_ARQ_Map;
-DROP MAPPING TABLE BSP_L2_ARQ_Map;
-DROP MAPPING TABLE BSP_L3_ARQ_Map;
 
 
 // ============================================================
@@ -1809,10 +1535,6 @@ LOAD
         Sum(If(Not IsNull(Die_BSP_FeederTripTime),  Wk_Die_SchedHours * Die_BSP_FeederTripTime, 0)) /
         Sum(If(Not IsNull(Die_BSP_FeederTripTime),  Wk_Die_SchedHours, 0)), Null())            as Wk_BSP_FeederTripTime,
 
-    If(Sum(If(Not IsNull(Die_BSP_ARQ),             Wk_Die_SchedHours, 0)) > 0,
-        Sum(If(Not IsNull(Die_BSP_ARQ),             Wk_Die_SchedHours * Die_BSP_ARQ, 0)) /
-        Sum(If(Not IsNull(Die_BSP_ARQ),             Wk_Die_SchedHours, 0)), Null())            as Wk_BSP_ARQ,
-
     // Coverage-weighted confidence score across all dies in week
     If(Sum(Wk_Die_SchedHours) > 0,
         Sum(Die_BSP_ConfScore * Wk_Die_SchedHours) / Sum(Wk_Die_SchedHours), 0)               as BSP_ConfScore,
@@ -1860,7 +1582,6 @@ LOAD
     If(Sum(SetupCount)   > 0, Sum(SetupHours)    / Sum(SetupCount),   Null())                   as Wk_SetupHrsPerEvent,
     If(Sum(BlanketWashEvents) > 0, Sum(BlanketWashHours) / Sum(BlanketWashEvents), Null())       as Wk_BlanketWashTime,
     If(Sum(FeederTripEvents)  > 0, Sum(FeederTripHours)  / Sum(FeederTripEvents),  Null())       as Wk_FeederTripTime,
-    If(Sum(SetupCount)   > 0, Sum(TotalQty_OEE)  / Sum(SetupCount),  Null())                    as Wk_ARQ,
     Sum(BlanketWashEvents)                                                                       as Wk_BlanketWashEvents,
     Sum(FeederTripEvents)                                                                        as Wk_FeederTripEvents,
     Max(MaxSpeed)                                                                               as Wk_MaxSpeed
@@ -1912,7 +1633,6 @@ LOAD
     Wk_SetupHrsPerEvent,
     Wk_BlanketWashTime,
     Wk_FeederTripTime,
-    Wk_ARQ,
     Wk_SchedHours,
     Wk_RunHours,
     Wk_SetupCount,
@@ -1930,11 +1650,6 @@ LOAD
         AND Not IsNull(Wk_Speed) AND Not IsNull(Peek('Wk_Speed'))
         AND Wk_Speed < Peek('Wk_Speed'),
         Peek('Streak_Speed') + 1, 0)                                                            as Streak_Speed,
-
-    If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID')
-        AND Not IsNull(Wk_ARQ) AND Not IsNull(Peek('Wk_ARQ'))
-        AND Wk_ARQ < Peek('Wk_ARQ'),
-        Peek('Streak_ARQ') + 1, 0)                                                              as Streak_ARQ,
 
     // Lower is better — higher = deterioration
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID')
@@ -1991,7 +1706,6 @@ LOAD
     Wk_SetupHrsPerEvent,
     Wk_BlanketWashTime,
     Wk_FeederTripTime,
-    Wk_ARQ,
     Wk_SchedHours,
     Wk_RunHours,
     Wk_SetupCount,
@@ -2000,7 +1714,6 @@ LOAD
     Wk_MaxSpeed,
     Streak_OEE,
     Streak_Speed,
-    Streak_ARQ,
     Streak_DowntimePct,
     Streak_DowntimeHrs,
     Streak_ScrapRate,
@@ -2032,7 +1745,6 @@ LOAD
     Avg(Wk_BSP_SetupHrsPerEvent)                                                                as Cur_BSP_SetupHrsPerEvent,
     Avg(Wk_BSP_BlanketWashTime)                                                                 as Cur_BSP_BlanketWashTime,
     Avg(Wk_BSP_FeederTripTime)                                                                  as Cur_BSP_FeederTripTime,
-    Avg(Wk_BSP_ARQ)                                                                             as Cur_BSP_ARQ,
     Avg(Wk_OEE)                                                                                 as Cur_OEE,
     Avg(Wk_Speed)                                                                               as Cur_Speed,
     Avg(Wk_DowntimePct)                                                                         as Cur_DowntimePct,
@@ -2041,7 +1753,6 @@ LOAD
     Avg(Wk_SetupHrsPerEvent)                                                                    as Cur_SetupHrsPerEvent,
     Avg(Wk_BlanketWashTime)                                                                     as Cur_BlanketWashTime,
     Avg(Wk_FeederTripTime)                                                                      as Cur_FeederTripTime,
-    Avg(Wk_ARQ)                                                                                 as Cur_ARQ,
     Sum(Wk_BlanketWashEvents)                                                                   as Cur_BlanketWashEvents,
     Sum(Wk_FeederTripEvents)                                                                    as Cur_FeederTripEvents,
     Sum(Wk_SchedHours)                                                                          as Cur_SchedHours,
@@ -2050,7 +1761,6 @@ LOAD
     Max(If(WeekStart = $(vLastWeekStart), Wk_MaxSpeed,             Null()))                     as Cur_MaxSpeed,
     Max(If(WeekStart = $(vLastWeekStart), Streak_OEE,              Null()))                     as Streak_OEE,
     Max(If(WeekStart = $(vLastWeekStart), Streak_Speed,            Null()))                     as Streak_Speed,
-    Max(If(WeekStart = $(vLastWeekStart), Streak_ARQ,              Null()))                     as Streak_ARQ,
     Max(If(WeekStart = $(vLastWeekStart), Streak_DowntimePct,      Null()))                     as Streak_DowntimePct,
     Max(If(WeekStart = $(vLastWeekStart), Streak_DowntimeHrs,      Null()))                     as Streak_DowntimeHrs,
     Max(If(WeekStart = $(vLastWeekStart), Streak_ScrapRate,        Null()))                     as Streak_ScrapRate,
@@ -2156,10 +1866,6 @@ DROP TABLE [BoardTypes_Rsn];
 // TotalSchedHrs_Map : Total SchedHours per machine over full
 //   1-week window — used as denominator for downtime reason %
 //   Must be total (not avg) to match summed ReasonDownHours
-// TotalQty_Rsn_Map  : Total TotalQty per machine over full
-//   1-week window — loaded from ALL rows regardless of scrap
-//   reason key — correct denominator for scrap reason %
-// Both loaded direct from QVD — small window, fast load
 // ============================================================
 
 [ReasonDenom_Raw]:
@@ -2168,9 +1874,7 @@ LOAD
     "WC Object ID",
     Sum(If(If(IsNull(fSched), 2, fSched) <= 1,
         "Time - Run" + "Time - Down" + "Time - Setup"
-        + "Time - Setup Down" + "Time - Non-Crewed", 0))               as TotalSchedHrs_2wk,
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1,
-        "Yield in OEE UOM" + "Scrap in OEE UOM", 0))                   as TotalQty_2wk
+        + "Time - Setup Down" + "Time - Non-Crewed", 0))               as TotalSchedHrs_2wk
 FROM [$(vFactQVD)]
 (qvd)
 WHERE Date >= $(v2WeekStart) AND Date < $(vCurrentWeekStart)
@@ -2182,15 +1886,9 @@ MAPPING LOAD
     TotalSchedHrs_2wk
 RESIDENT [ReasonDenom_Raw];
 
-TotalQty_Rsn_Map:
-MAPPING LOAD
-    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|' & [WC Object ID],
-    TotalQty_2wk
-RESIDENT [ReasonDenom_Raw];
-
 DROP TABLE [ReasonDenom_Raw];
 
-// Die-level SchedHours + TotalQty for 2-week window — used as weights when
+// Die-level SchedHours for 2-week window — used as weights when
 // aggregating die+reason level BSP back up to machine+reason level
 [CurPeriod_DieStats_Raw]:
 NoConcatenate
@@ -2200,9 +1898,7 @@ LOAD
     "Plant Material Key"                                                    as PltMatKey,
     Sum(If(If(IsNull(fSched), 2, fSched) <= 1,
         "Time - Run" + "Time - Down" + "Time - Setup"
-        + "Time - Setup Down" + "Time - Non-Crewed", 0))                    as Die_SchedHrs_2wk,
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1,
-        "Yield in OEE UOM" + "Scrap in OEE UOM", 0))                       as Die_TotalQty_2wk
+        + "Time - Setup Down" + "Time - Non-Crewed", 0))                    as Die_SchedHrs_2wk
 FROM [$(vFactQVD)]
 (qvd)
 WHERE Date >= $(v2WeekStart) AND Date < $(vCurrentWeekStart)
@@ -2212,12 +1908,6 @@ DieSchedHrs_Rsn_Map:
 MAPPING LOAD
     ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey,
     Die_SchedHrs_2wk
-RESIDENT [CurPeriod_DieStats_Raw];
-
-DieTotalQty_Rsn_Map:
-MAPPING LOAD
-    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey,
-    Die_TotalQty_2wk
 RESIDENT [CurPeriod_DieStats_Raw];
 
 DROP TABLE [CurPeriod_DieStats_Raw];
@@ -2306,94 +1996,13 @@ DROP MAPPING TABLE BSP_L3_DwnRsn_Map;
 
 
 // ============================================================
-// SECTION 41: CURRENT PERIOD SCRAP REASON AGGREGATION
-// Aggregated at Die + Reason grain to enable 3-level BSP fallback
-// L1 key : Plant|WC|Die|ScrapReasonKey
-// L2 key : Plant|WC|BoardTypeGroup|BoardCaliper|ScrapReasonKey
-// L3 key : Plant|WC|ScrapReasonKey
-// BSP weighted by die TotalQty when rolling up to machine+reason
-// Denominator : TotalQty_Rsn_Map (all rows, not scrap rows only)
-// ============================================================
-
-CurPeriod_ScrReason_DieLvl_Raw:
-NoConcatenate
-LOAD
-    "WC Object ID",
-    Die,
-    "Plant Material Key"                                                    as PltMatKey,
-    "Scrap Plant Reason Key",
-    Only("Carton Style")                                                    as CartonStyle,
-    Max(ApplyMap('OrderOp_NumberUp_Map', "Order Operation Key", Null()))    as NumberUp,
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM", 0))    as Cur_ReasonScrapQty
-FROM [$(vFactQVD)]
-(qvd)
-WHERE Date >= $(v2WeekStart) AND Date < $(vCurrentWeekStart)
-    AND Len(Trim("Scrap Plant Reason Key")) > 0
-GROUP BY "WC Object ID", Die, "Plant Material Key", "Scrap Plant Reason Key";
-
-CurPeriod_ScrReason_DieLvl:
-NoConcatenate
-LOAD
-    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')                 as Plant,
-    "WC Object ID",
-    "Scrap Plant Reason Key",
-    Cur_ReasonScrapQty,
-    ApplyMap('DieTotalQty_Rsn_Map',
-        ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
-        & '|' & [WC Object ID] & '|' & Die & '|' & PltMatKey, 0)           as Die_TotalQty_2wk,
-    Coalesce(
-        ApplyMap('BSP_L1_ScrRsn_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|' & Die & '|' & [Scrap Plant Reason Key], Null()),
-        ApplyMap('BSP_L2_ScrRsn_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|'
-            & ApplyMap('BoardTypeGroup_Rsn_Map', ApplyMap('BoardType_Rsn_Map', PltMatKey, Null()), Null()) & '|'
-            & ApplyMap('BoardCaliper_Rsn_Map',   ApplyMap('Material_Rsn_Map',  PltMatKey, Null()), Null()) & '|'
-            & If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Gluer', 'Window'),
-                    Text(CartonStyle),
-                If(Match(ApplyMap('Department_Rsn_Map', "WC Object ID", 'Unknown'), 'Sheetfed Cutting', 'Web Cutting'),
-                    Text(NumberUp),
-                   '')) & '|'
-            & [Scrap Plant Reason Key], Null()),
-        ApplyMap('BSP_L3_ScrRsn_Map',
-            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown') & '|'
-            & [WC Object ID] & '|' & [Scrap Plant Reason Key], Null())
-    )                                                                       as Rsn_BSP_ScrapPct
-RESIDENT CurPeriod_ScrReason_DieLvl_Raw;
-
-DROP TABLE CurPeriod_ScrReason_DieLvl_Raw;
-
-CurPeriod_ScrReason:
-NoConcatenate
-LOAD
-    Plant,
-    "WC Object ID",
-    "Scrap Plant Reason Key"                                                as sPltRsnKey,
-    Sum(Cur_ReasonScrapQty)                                                 as Cur_ReasonScrapQty,
-    ApplyMap('TotalQty_Rsn_Map',
-        Plant & '|' & [WC Object ID], Null())                               as TotalQty_2wk,
-    If(Sum(If(Not IsNull(Rsn_BSP_ScrapPct), Die_TotalQty_2wk, 0)) > 0,
-        Sum(If(Not IsNull(Rsn_BSP_ScrapPct), Die_TotalQty_2wk * Rsn_BSP_ScrapPct, 0)) /
-        Sum(If(Not IsNull(Rsn_BSP_ScrapPct), Die_TotalQty_2wk, 0)), Null()) as Rsn_BSP_ScrapPct
-RESIDENT CurPeriod_ScrReason_DieLvl
-GROUP BY Plant, "WC Object ID", "Scrap Plant Reason Key";
-
-DROP TABLE CurPeriod_ScrReason_DieLvl;
-DROP MAPPING TABLE BSP_L1_ScrRsn_Map;
-DROP MAPPING TABLE BSP_L2_ScrRsn_Map;
-DROP MAPPING TABLE BSP_L3_ScrRsn_Map;
-
-
-// ============================================================
 // SECTION 41B: 4-WEEK REASON STREAK
 // Per reason (Plant + WC + ReasonKey), counts how many of the
 // last 4 weeks the reason's weekly rate exceeded its 2-week
 // rolled-up BSP benchmark. Streak_4wk ∈ [0, 4].
 //
-// Scope: Downtime (tPltRsnKey) and Scrap (sPltRsnKey) only.
-// Feeder/Blanket streaks are not computed here — those rows
-// carry Streak_4wk = 0 (Sheet_Impact reduces to pure Sheet_Gap).
+// Scope: Downtime (tPltRsnKey) only.
+// Feeder/Blanket and Scrap Reason streaks are not computed here.
 // ============================================================
 
 // -- Weekly SchedHrs per machine (denominator for downtime-reason weekly rate)
@@ -2416,27 +2025,7 @@ MAPPING LOAD
     Wk_SchedHrs
 RESIDENT WeeklySchedHrs_Rsn_Raw;
 
-// -- Weekly TotalQty per machine (denominator for scrap-reason weekly rate)
-WeeklyTotalQty_Rsn_Raw:
-NoConcatenate
-LOAD
-    WeekStart(Date, 0, $(vWeekStartDay))                                as WeekStart,
-    "WC Object ID",
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1,
-        "Yield in OEE UOM" + "Scrap in OEE UOM", 0))                    as Wk_TotalQty
-FROM [$(vFactQVD)]
-(qvd)
-WHERE Date >= $(v4WeekStart) AND Date < $(vCurrentWeekStart)
-GROUP BY WeekStart(Date, 0, $(vWeekStartDay)), "WC Object ID";
-
-WeeklyTotalQty_Rsn_Map:
-MAPPING LOAD
-    WeekStart & '|' & [WC Object ID],
-    Wk_TotalQty
-RESIDENT WeeklyTotalQty_Rsn_Raw;
-
 DROP TABLE WeeklySchedHrs_Rsn_Raw;
-DROP TABLE WeeklyTotalQty_Rsn_Raw;
 
 // -- Machine-rolled BSP benchmarks keyed by Plant|WC|ReasonKey
 Rsn_BSP_Down_Map:
@@ -2445,13 +2034,6 @@ MAPPING LOAD
     Rsn_BSP_DownPct
 RESIDENT CurPeriod_DwnReason
 WHERE Not IsNull(Rsn_BSP_DownPct);
-
-Rsn_BSP_Scrap_Map:
-MAPPING LOAD
-    Plant & '|' & [WC Object ID] & '|' & sPltRsnKey,
-    Rsn_BSP_ScrapPct
-RESIDENT CurPeriod_ScrReason
-WHERE Not IsNull(Rsn_BSP_ScrapPct);
 
 // -- Weekly downtime-reason aggregation
 WeeklyDwnReason_Raw:
@@ -2498,63 +2080,15 @@ RESIDENT Rsn_Down_Streak_Raw;
 DROP TABLE WeeklyDwnReason_Raw;
 DROP TABLE Rsn_Down_Streak_Raw;
 
-// -- Weekly scrap-reason aggregation
-WeeklyScrReason_Raw:
-NoConcatenate
-LOAD
-    WeekStart(Date, 0, $(vWeekStartDay))                                as WeekStart,
-    "WC Object ID",
-    "Scrap Plant Reason Key",
-    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM", 0))  as Wk_ReasonScrapQty
-FROM [$(vFactQVD)]
-(qvd)
-WHERE Date >= $(v4WeekStart) AND Date < $(vCurrentWeekStart)
-    AND Len(Trim("Scrap Plant Reason Key")) > 0
-GROUP BY WeekStart(Date, 0, $(vWeekStartDay)), "WC Object ID", "Scrap Plant Reason Key";
-
-Rsn_Scrap_Streak_Raw:
-NoConcatenate
-LOAD
-    "WC Object ID",
-    "Scrap Plant Reason Key"                                            as sPltRsnKey,
-    Sum(
-        If(ApplyMap('WeeklyTotalQty_Rsn_Map', WeekStart & '|' & [WC Object ID], 0) > 0
-           AND ApplyMap('Rsn_BSP_Scrap_Map',
-                   ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
-                   & '|' & [WC Object ID] & '|' & "Scrap Plant Reason Key", 0) > 0
-           AND (Wk_ReasonScrapQty
-                / ApplyMap('WeeklyTotalQty_Rsn_Map', WeekStart & '|' & [WC Object ID], 1))
-               > ApplyMap('Rsn_BSP_Scrap_Map',
-                   ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
-                   & '|' & [WC Object ID] & '|' & "Scrap Plant Reason Key", 0),
-           1, 0)
-    )                                                                   as Streak_4wk
-RESIDENT WeeklyScrReason_Raw
-GROUP BY "WC Object ID", "Scrap Plant Reason Key";
-
-Rsn_Scrap_Streak_Map:
-MAPPING LOAD
-    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
-        & '|' & [WC Object ID] & '|' & sPltRsnKey,
-    Streak_4wk
-RESIDENT Rsn_Scrap_Streak_Raw;
-
-DROP TABLE WeeklyScrReason_Raw;
-DROP TABLE Rsn_Scrap_Streak_Raw;
-
 DROP MAPPING TABLE WeeklySchedHrs_Rsn_Map;
-DROP MAPPING TABLE WeeklyTotalQty_Rsn_Map;
 DROP MAPPING TABLE Rsn_BSP_Down_Map;
-DROP MAPPING TABLE Rsn_BSP_Scrap_Map;
 
 
 DROP MAPPING TABLE Plant_Reason_Map;
 DROP MAPPING TABLE Department_Rsn_Map;
 DROP MAPPING TABLE OrderOp_NumberUp_Map;
 DROP MAPPING TABLE TotalSchedHrs_Rsn_Map;
-DROP MAPPING TABLE TotalQty_Rsn_Map;
 DROP MAPPING TABLE DieSchedHrs_Rsn_Map;
-DROP MAPPING TABLE DieTotalQty_Rsn_Map;
 DROP MAPPING TABLE BoardType_Rsn_Map;
 DROP MAPPING TABLE Material_Rsn_Map;
 DROP MAPPING TABLE BoardTypeGroup_Rsn_Map;
@@ -2723,36 +2257,6 @@ WHERE Not IsNull(Cur_BSP_SetupHrsPerEvent) AND Not IsNull(Cur_SetupHrsPerEvent)
 
 Concatenate (InsightRecords_Raw)
 LOAD
-    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|ARQ'           as Insight_ID,
-    Plant,
-    "WC Object ID",
-    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                       as "Plant - WC",
-    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
-    Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
-    'ARQ'                                                                                       as KPI_Name,
-    'Lever - OEE'                                                                               as KPI_Category,
-    Cur_ARQ                                                                                     as Cur_Actual,
-    Cur_BSP_ARQ                                                                                 as BSP_Benchmark,
-    Cur_ARQ                                                                                     as Cur_Actual_Fmt,
-    Cur_BSP_ARQ                                                                                 as BSP_Benchmark_Fmt,
-    If(Cur_BSP_ARQ > 0, (Cur_BSP_ARQ - Cur_ARQ) / Cur_BSP_ARQ * 100, 0)                        as Gap_Pct,
-    If(Cur_BSP_ARQ > 0, (Cur_BSP_ARQ - Cur_ARQ) * Cur_SetupEventCount, 0)                      as Sheet_Gap,
-    RangeMin(If(IsNull(Streak_ARQ), 0, Streak_ARQ), 4)                                          as Streak_4wk,
-    Cur_SchedHours,
-    Cur_BSP_CoveragePct,
-    Cur_BSP_ConfScore,
-    Cur_BSP_PoolSize,
-    If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
-        If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
-            If(Cur_BSP_ConfScore >= 0.5, 'LOW',
-                'Insufficient History')))                                                        as BSP_Confidence
-RESIDENT CurrentPeriod
-WHERE Not IsNull(Cur_BSP_ARQ) AND Not IsNull(Cur_ARQ)
-    AND Cur_ARQ < Cur_BSP_ARQ
-    AND Cur_BSP_CoveragePct > $(vMinCoverage);
-
-Concatenate (InsightRecords_Raw)
-LOAD
     Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|BWTTIME'       as Insight_ID,
     Plant,
     "WC Object ID",
@@ -2830,7 +2334,6 @@ DROP TABLE CurrentPeriod;
 //   Scrap Rate       : (Actual - BSP) * Cur_RunHours   * Cur_BSP_Speed
 //   Speed            : (BSP - Actual) * Cur_RunHours
 //   Avg MR Time      : (Actual - BSP) * Cur_SetupEventCount * Cur_BSP_Speed
-//   ARQ              : (BSP - Actual) * Cur_SetupEventCount
 //   Avg Blanket Wash : (Actual - BSP) * Cur_BlanketWashEvents * Cur_BSP_Speed
 //   Avg Feeder Trip  : (Actual - BSP) * Cur_FeederTripEvents  * Cur_BSP_Speed
 // Streak_4wk is a display field only; does not affect Sheet_Impact
@@ -2870,9 +2373,6 @@ DROP TABLE InsightRecords_Raw;
 // ============================================================
 // SECTION 44: REASON INSIGHT RECORDS
 // Downtime : Cur_Actual = ReasonDownHours / TotalSchedHrs_2wk
-// Scrap    : Cur_Actual = ReasonScrapQty  / TotalQty_2wk
-// Both denominators are now 2-week totals — consistent with
-// how BSP benchmarks are calculated (per qualifying run)
 // ============================================================
 
 
@@ -2915,43 +2415,8 @@ LOAD
 RESIDENT CurPeriod_DwnReason
 WHERE Not IsNull(Rsn_BSP_DownPct);
 
-Concatenate (ReasonInsights_Raw)
-LOAD
-    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|SCRRSN|' & sPltRsnKey as Insight_ID,
-    Plant,
-    "WC Object ID",
-    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                       as "Plant - WC",
-    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
-    Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
-    'Scrap Reason'                                                                              as KPI_Name,
-    'Lever - Scrap Rate'                                                                        as KPI_Category,
-    ApplyMap('ScrapReason_Name_Map', sPltRsnKey, sPltRsnKey)                                    as Reasons,
-    If(TotalQty_2wk > 0, Cur_ReasonScrapQty / TotalQty_2wk, Null())                             as Cur_Actual,
-    Rsn_BSP_ScrapPct                                                                            as BSP_Benchmark,
-    Num(If(TotalQty_2wk > 0, Cur_ReasonScrapQty / TotalQty_2wk, Null()), '0.00%')               as Cur_Actual_Fmt,
-    Num(Rsn_BSP_ScrapPct,                                                              '0.00%') as BSP_Benchmark_Fmt,
-    If(Not IsNull(Rsn_BSP_ScrapPct) AND Rsn_BSP_ScrapPct > 0
-        AND TotalQty_2wk > 0
-        AND Cur_ReasonScrapQty / TotalQty_2wk > Rsn_BSP_ScrapPct,
-        (Cur_ReasonScrapQty / TotalQty_2wk - Rsn_BSP_ScrapPct) / Rsn_BSP_ScrapPct * 100, 0)     as Gap_Pct,
-    RangeMin(ApplyMap('Rsn_Scrap_Streak_Map',
-        Plant & '|' & [WC Object ID] & '|' & sPltRsnKey, 0), 4)                                 as Streak_4wk,
-    If(Not IsNull(Rsn_BSP_ScrapPct) AND Rsn_BSP_ScrapPct > 0
-        AND TotalQty_2wk > 0
-        AND Cur_ReasonScrapQty / TotalQty_2wk > Rsn_BSP_ScrapPct,
-        Round(
-            (Cur_ReasonScrapQty / TotalQty_2wk - Rsn_BSP_ScrapPct)
-            * ApplyMap('CurSchedHrs_Map', Plant & '|' & [WC Object ID], 0)
-            * ApplyMap('Mach_BSPSpeed_Map', Plant & '|' & [WC Object ID], 0),
-            0.01
-        ), 0)                                                                                   as Sheet_Impact
-RESIDENT CurPeriod_ScrReason
-WHERE Not IsNull(Rsn_BSP_ScrapPct);
-
 DROP TABLE CurPeriod_DwnReason;
-DROP TABLE CurPeriod_ScrReason;
 DROP MAPPING TABLE Rsn_Down_Streak_Map;
-DROP MAPPING TABLE Rsn_Scrap_Streak_Map;
 
 
 DROP MAPPING TABLE CurSchedHrs_Map;
@@ -3003,9 +2468,8 @@ DROP TABLE InsightRecords_Sorted;
 // ============================================================
 // SECTION 46: RANK REASON INSIGHTS WITHIN MACHINE
 // Ranked by Sheet_Impact DESC within (Plant, WC, KPI_Name)
-// Top-3 cap applied ONLY to 'Downtime Reason' and 'Scrap Reason'
-// rows — per user spec items 1a / 1b. Feeder/Blanket rows are
-// not capped (one row per machine per metric anyway).
+// Top-3 cap applied ONLY to 'Downtime Reason' rows.
+// Other reason rows are not capped (one row per machine per metric).
 // ============================================================
 
 ReasonInsights_Sorted:
@@ -3047,14 +2511,14 @@ RESIDENT ReasonInsights_Sorted;
 
 DROP TABLE ReasonInsights_Sorted;
 
-// Top-3 cap for Downtime Reason and Scrap Reason; keep all others
+// Top-3 cap for Downtime Reason; keep all others
 ReasonInsightRecords:
 NoConcatenate
 LOAD *
 RESIDENT ReasonInsightRecords_All
 WHERE
-    (Match(KPI_Name, 'Downtime Reason', 'Scrap Reason') AND Insight_Rank <= 3)
-    OR Not Match(KPI_Name, 'Downtime Reason', 'Scrap Reason');
+    (KPI_Name = 'Downtime Reason' AND Insight_Rank <= 3)
+    OR KPI_Name <> 'Downtime Reason';
 
 DROP TABLE ReasonInsightRecords_All;
 
@@ -3075,7 +2539,6 @@ DROP TABLE ReasonInsightRecords;
 DROP MAPPING TABLE Department_IR_Map;
 DROP MAPPING TABLE PlantWC_IR_Map;
 DROP MAPPING TABLE TimeReason_Name_Map;
-DROP MAPPING TABLE ScrapReason_Name_Map;
 
 
 
@@ -3166,6 +2629,8 @@ LOAD
     [WC Object ID],
     KPI_Name                                                        as Outcome_Name,
     Sheet_Impact                                                    as Outcome_Sheets,
+    Cur_Actual                                                      as Outcome_CurActual,
+    BSP_Benchmark                                                   as Outcome_BSPBenchmark,
     If(Plant = Peek('Plant') AND [WC Object ID] = Peek('WC Object ID'),
        Peek('Outcome_Rank') + 1, 1)                                 as Outcome_Rank
 RESIDENT InsightRecords
@@ -3186,6 +2651,20 @@ Outcome1_Sheets_Map:
 MAPPING LOAD
     Plant & '|' & [WC Object ID],
     Outcome_Sheets
+RESIDENT Temp_OutcomeRanked
+WHERE Outcome_Rank = 1;
+
+Outcome1_CurActual_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID],
+    Outcome_CurActual
+RESIDENT Temp_OutcomeRanked
+WHERE Outcome_Rank = 1;
+
+Outcome1_BSP_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID],
+    Outcome_BSPBenchmark
 RESIDENT Temp_OutcomeRanked
 WHERE Outcome_Rank = 1;
 
@@ -3279,8 +2758,8 @@ DROP TABLE Temp_DriverParent;
 
 
 // ---- Step F3: sub-lever ranked pool ----
-// Ranks Downtime % sub-levers (Lever - Downtime %) and Scrap Rate sub-levers
-// (Lever - Scrap Rate) 1-2 per (Plant, WC, Parent) by Sheet_Impact DESC.
+// Ranks Downtime % sub-levers (Lever - Downtime %) 1-2 per (Plant, WC, Parent)
+// by Sheet_Impact DESC.
 
 Temp_SubLeversRanked:
 NoConcatenate
@@ -3300,7 +2779,7 @@ LOAD
        Peek('Sub_Rank') + 1, 1)                                             as Sub_Rank
 RESIDENT InsightRecords
 WHERE Period_Start = $(v2WeekStart)
-  AND Match(KPI_Category, 'Lever - Downtime %', 'Lever - Scrap Rate') > 0
+  AND KPI_Category = 'Lever - Downtime %'
 ORDER BY Plant, [WC Object ID], KPI_Category, Sheet_Impact DESC;
 
 
@@ -3726,6 +3205,8 @@ LOAD
     ApplyMap('TotalImpact_Map',      Plant & '|' & [WC Object ID],  Null())     as Total_Sheet_Impact,
     ApplyMap('Outcome1_Map',         Plant & '|' & [WC Object ID],  Null())     as Outcome_1_Name,
     ApplyMap('Outcome1_Sheets_Map',  Plant & '|' & [WC Object ID],  Null())     as Outcome_1_Sheets,
+    ApplyMap('Outcome1_CurActual_Map', Plant & '|' & [WC Object ID], Null())    as Outcome_1_Cur_Actual,
+    ApplyMap('Outcome1_BSP_Map',       Plant & '|' & [WC Object ID], Null())    as Outcome_1_BSP_Benchmark,
     ApplyMap('Lever1_Name_Map',      Plant & '|' & [WC Object ID],  Null())     as Lever_1_Name,
     ApplyMap('Lever1_Reasons_Map',   Plant & '|' & [WC Object ID],  Null())     as Lever_1_Reasons,
     ApplyMap('Lever1_Sheets_Map',    Plant & '|' & [WC Object ID],  Null())     as Lever_1_Sheets,
@@ -3774,6 +3255,8 @@ DROP TABLE MachineWeekSummary_Base;
 DROP MAPPING TABLE TotalImpact_Map;
 DROP MAPPING TABLE Outcome1_Map;
 DROP MAPPING TABLE Outcome1_Sheets_Map;
+DROP MAPPING TABLE Outcome1_CurActual_Map;
+DROP MAPPING TABLE Outcome1_BSP_Map;
 DROP MAPPING TABLE DriverParent_Name_Map;
 DROP MAPPING TABLE DriverParent_Sheets_Map;
 DROP MAPPING TABLE Lever1_Name_Map;

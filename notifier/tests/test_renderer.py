@@ -6,15 +6,24 @@ import pandas as pd
 import pytest
 
 from src.grouper import group_by_manager
+from src.findings import load_findings
 from src.renderer import render_html, render_text
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_summary.csv"
+FINDINGS_FIXTURE = Path(__file__).parent / "fixtures" / "sample_findings.csv"
 
 
 @pytest.fixture()
 def digests():
     df = pd.read_csv(FIXTURE)
     return group_by_manager(df)
+
+
+@pytest.fixture()
+def digests_with_findings():
+    df = pd.read_csv(FIXTURE)
+    findings_df = load_findings(FINDINGS_FIXTURE.read_bytes())
+    return group_by_manager(df, findings_df=findings_df)
 
 
 @pytest.fixture()
@@ -59,19 +68,15 @@ def test_html_no_streak_when_zero(digest_b):
     assert "2/4" in html
 
 
-def test_html_driven_by_downtime_when_present(digest_b):
-    # Flexo 01 has driver_parent = Downtime % — clause must appear
-    html = render_html(digest_b, "Test Subject")
-    assert "driven primarily by <strong>Downtime %</strong>" in html
-
-
-def test_html_no_driven_clause_when_absent(digest_a):
-    # digest_a contains Gluer 02 which has driver_parent = None — no clause
+def test_html_no_driven_clause_anywhere(digest_a):
+    # "driven primarily by" clause removed entirely
     html = render_html(digest_a, "Test Subject")
-    # Gluer 01 has driver_parent so "driven primarily by" appears at least once,
-    # but the Gluer 02 block must NOT contain it (driver_parent is None)
-    # Verify the string "driven primarily by <strong>OEE" never appears
-    assert "driven primarily by <strong>OEE" not in html
+    assert "driven primarily by" not in html
+
+
+def test_html_no_driven_clause_digest_b(digest_b):
+    html = render_html(digest_b, "Test Subject")
+    assert "driven primarily by" not in html
 
 
 def test_text_contains_machine_name(digest_a):
@@ -181,3 +186,65 @@ def test_text_overview_total_sheets(digest_a):
 def test_text_overview_top_mover(digest_a):
     text = render_text(digest_a, "Test Subject")
     assert "Elk Grove / Gluer 01" in text
+
+
+def test_html_overview_oee_columns_present(digest_a):
+    html = render_html(digest_a, "Test Subject")
+    assert "Cur OEE" in html
+    assert "BSP OEE" in html
+    # Gluer 01: cur_oee=0.6234 → 62.34%
+    assert "62.34%" in html
+    assert "78.12%" in html
+
+
+def test_html_overview_downtime_reason_relabeled(digest_a):
+    # Gluer 01's top lever is Downtime Reason — overview column should show "Downtime"
+    html = render_html(digest_a, "Test Subject")
+    assert ">Downtime<" in html
+
+
+def test_html_graphic_care_findings_subheading(digests_with_findings):
+    # subheading changed; "Maintenance Findings" must not appear
+    digest = next(d for d in digests_with_findings if d.manager_email == "manager.a@company.com")
+    html = render_html(digest, "Test Subject")
+    assert "Maintenance Findings" not in html
+    assert "Graphic Care Findings" in html
+
+
+def test_html_gc_open_column_header(digests_with_findings):
+    # Maintenance Report table only renders when findings are attached
+    digest = next(d for d in digests_with_findings if d.manager_email == "manager.a@company.com")
+    html = render_html(digest, "Test Subject")
+    assert "GC Open" in html
+    assert "GC Missing WO" in html
+
+
+def test_text_overview_oee_columns_present(digest_a):
+    text = render_text(digest_a, "Test Subject")
+    assert "Cur OEE" in text
+    assert "BSP OEE" in text
+    assert "62.34%" in text
+
+
+def test_html_time_lever_shows_mins(digest_a):
+    # Gluer 01 Lever_2 is Avg MR Time (0.45 hr → 27 Mins, 0.333 hr → 20 Mins)
+    html = render_html(digest_a, "Test Subject")
+    assert "27 Mins" in html
+    assert "20 Mins" in html
+
+
+def test_html_speed_lever_integer(digest_b):
+    # Chicago / Flexo 01 Speed lever: 45,000 and 52,000 (no decimals)
+    html = render_html(digest_b, "Test Subject")
+    assert "45,000" in html
+    assert "52,000" in html
+
+
+def test_html_no_scrap_reason_in_output(digest_a):
+    html = render_html(digest_a, "Test Subject")
+    assert "Scrap Reason" not in html
+
+
+def test_html_no_scrap_reason_digest_b(digest_b):
+    html = render_html(digest_b, "Test Subject")
+    assert "Scrap Reason" not in html

@@ -32,7 +32,7 @@
   .tile { background: #f0f4fa; border-radius: 6px; padding: 10px 20px; text-align: center; min-width: 120px; }
   .tile-value { font-size: 1.4em; font-weight: bold; color: #003366; }
   .tile-label { font-size: 0.8em; color: #555; margin-top: 2px; }
-  .movers-table { border-collapse: collapse; width: 100%; max-width: 500px; font-size: 0.93em; margin-bottom: 12px; }
+  .movers-table { border-collapse: collapse; width: 100%; max-width: 640px; font-size: 0.93em; margin-bottom: 12px; }
   .movers-table th { background: #e8eef6; color: #003366; text-align: left; padding: 5px 8px; }
   .movers-table td { padding: 4px 8px; border-bottom: 1px solid #eee; }
   .movers-count { text-align: center; }
@@ -69,6 +69,8 @@
   <thead>
     <tr>
       <th>Machine</th>
+      <th class="movers-count">Cur OEE</th>
+      <th class="movers-count">BSP OEE</th>
       <th class="movers-count">Sheets Lost vs BSP OEE ▼</th>
       <th>Top Lever</th>
     </tr>
@@ -77,6 +79,8 @@
     {% for row in ov.top_movers %}
     <tr>
       <td>{{ row.plant_wc }}</td>
+      <td class="movers-count">{{ row.cur_oee | percent if row.cur_oee is not none else '&mdash;' }}</td>
+      <td class="movers-count">{{ row.bsp_oee | percent if row.bsp_oee is not none else '&mdash;' }}</td>
       <td class="movers-count">{{ row.total_sheet_impact | comma_int }}</td>
       <td>{{ row.top_lever if row.top_lever else '&mdash;' }}</td>
     </tr>
@@ -87,9 +91,9 @@
 
 {% if ov.has_maintenance %}
 <p class="maint-line">
-  Maintenance: <strong>{{ ov.maint_open }}</strong> open findings
+  Maintenance: <strong>{{ ov.maint_open }}</strong> open {{ ov.maint_open | pluralize('finding') }}
   {%- if ov.maint_priority10 %} (<strong>{{ ov.maint_priority10 }}</strong> priority-10){%- endif %},
-  <strong>{{ ov.maint_overdue_pm }}</strong> PMs overdue &mdash; see Maintenance Report below.
+  <strong>{{ ov.maint_overdue_pm }}</strong> {{ ov.maint_overdue_pm | pluralize('PM') }} overdue &mdash; see Maintenance Report below.
 </p>
 {% endif %}
 {% endif %}
@@ -103,8 +107,8 @@
   <thead>
     <tr>
       <th>Machine</th>
-      <th class="maint-count">Open</th>
-      <th class="maint-count">Missing WO</th>
+      <th class="maint-count">GC Open</th>
+      <th class="maint-count">GC Missing WO</th>
       <th class="maint-count">Overdue PM Procedures</th>
     </tr>
   </thead>
@@ -131,11 +135,7 @@
 <h3>{{ m.plant_wc }} — {{ m.department }}</h3>
 <p class="impact">
   <strong>{{ m.plant_wc }}</strong> lost
-  <strong>{{ m.total_sheet_impact | comma_int }} sheets</strong> of OEE Impact this week
-  {%- if m.driver_parent %},
-  driven primarily by <strong>{{ m.driver_parent }}</strong>
-  ({{ m.driver_parent_sheets | comma_int }} sheets)
-  {%- endif %}.
+  <strong>{{ m.total_sheet_impact | comma_int }} sheets</strong> of OEE Impact this week.
 </p>
 
 {% if m.levers %}
@@ -160,11 +160,11 @@
 
 {% if m.findings %}
 <div class="findings">
-  <h4>Maintenance Findings</h4>
+  <h4>Graphic Care Findings</h4>
   <p>
     Open: <strong>{{ m.findings.total_open }}</strong> &middot;
     Missing WO: <strong>{{ m.findings.total_missing_wo }}</strong> &middot;
-    Overdue WOs: <strong>{{ m.findings.total_overdue }}</strong>
+    Overdue {{ m.findings.total_overdue | pluralize('WO') }}: <strong>{{ m.findings.total_overdue }}</strong>
     {%- if m.findings.high_priority_count %}
       &middot; <span style="color:#7b0000;">&#9888; Priority-10: <strong>{{ m.findings.high_priority_count }}</strong></span>
     {%- endif %}
