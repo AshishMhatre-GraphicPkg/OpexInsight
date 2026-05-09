@@ -157,9 +157,9 @@ Reason rows have `Cur_BSP_CoveragePct / Cur_BSP_ConfScore / Cur_BSP_PoolSize / B
 ## fSched Filtering Rules
 
 Applied inline on every aggregation — never pre-filtered:
-- **Time metrics** (RunHours, DownHours, SetupHours, SetupDownHours, NonCrewedHours): `If(IsNull(fSched), 2, fSched) <= 1`
-- **Qty metrics** (Yield/Scrap in OEE UOM and BUOM): `If(IsNull(fSched), 2, fSched) >= 1`
-- Null fSched rows are treated as 2 (qty-only rows).
+- **Time metrics** (RunHours, DownHours, SetupHours, SetupDownHours, NonCrewedHours): `fSched = 1` — exact match only. Matches the dashboard formula `{<fSched={'1'}>}`. fSched=0 rows are excluded (they were previously included under the old `<= 1` filter and inflated the OEE denominator for machines with fSched=0 time rows).
+- **Qty metrics** (Yield/Scrap in OEE UOM and BUOM): `If(IsNull(fSched), 2, fSched) >= 1` — unchanged; includes fSched=1 and fSched=2 (qty-only) rows.
+- Null fSched rows are treated as 2 for qty purposes; excluded from time calculations (fSched=1 exact filter naturally excludes null).
 
 ## KPI Direction Reference
 

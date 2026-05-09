@@ -343,27 +343,27 @@ LOAD
         If(WildMatch("Time Plant Reason Key", '*2MR0*'), 2,
             If(WildMatch("Time Plant Reason Key", '*3MR0*'), 3,
                 Null()))))                                                                      as MROClass,
-    Max(If(If(IsNull(fSched), 2, fSched) <= 1, "Max Gluer Cartons Per Hour", Null()))          as MaxGluerCPH,
-    Max(If(If(IsNull(fSched), 2, fSched) <= 1, "OEM Speed",                  Null()))          as OEMSpeed,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Run",        0))                        as RunHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Down",       0))                        as DownHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Setup",      0))                        as SetupHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Setup Down", 0))                        as SetupDownHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Non-Crewed", 0))                        as NonCrewedHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Setup Count",       0))                        as SetupCount,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Down Count",        0))                        as DownCount,
+    Max(If(fSched = 1, "Max Gluer Cartons Per Hour", Null()))          as MaxGluerCPH,
+    Max(If(fSched = 1, "OEM Speed",                  Null()))          as OEMSpeed,
+    Sum(If(fSched = 1, "Time - Run",        0))                        as RunHours,
+    Sum(If(fSched = 1, "Time - Down",       0))                        as DownHours,
+    Sum(If(fSched = 1, "Time - Setup",      0))                        as SetupHours,
+    Sum(If(fSched = 1, "Time - Setup Down", 0))                        as SetupDownHours,
+    Sum(If(fSched = 1, "Time - Non-Crewed", 0))                        as NonCrewedHours,
+    Sum(If(fSched = 1, "Setup Count",       0))                        as SetupCount,
+    Sum(If(fSched = 1, "Down Count",        0))                        as DownCount,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in OEE UOM",  0))                        as GoodQty_OEE,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM",  0))                        as ScrapQty_OEE,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in BUOM",     0))                        as GoodQty_BUOM,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in BUOM",     0))                        as ScrapQty_BUOM,
     Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                             as BlanketWashHours,
+        AND fSched = 1, "Time - Down", 0))                             as BlanketWashHours,
     Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count",  0))                             as BlanketWashEvents,
+        AND fSched = 1, "Down Count",  0))                             as BlanketWashEvents,
     Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                             as FeederTripHours,
+        AND fSched = 1, "Time - Down", 0))                             as FeederTripHours,
     Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count",  0))                             as FeederTripEvents
+        AND fSched = 1, "Down Count",  0))                             as FeederTripEvents
 RESIDENT JobFact_Raw
 WHERE Date >= $(v2YearStart) AND Date < $(vCurrentWeekStart)
 GROUP BY
@@ -473,24 +473,24 @@ LOAD
         If(WildMatch("Time Plant Reason Key", '*2MR0*'), 2,
             If(WildMatch("Time Plant Reason Key", '*3MR0*'), 3,
                 Null()))))                                                                      as MROClass,
-    Max(If(If(IsNull(fSched), 2, fSched) <= 1, "Max Gluer Cartons Per Hour", Null()))          as MaxGluerCPH,
-    Max(If(If(IsNull(fSched), 2, fSched) <= 1, "OEM Speed",                  Null()))          as OEMSpeed,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Run",        0))                        as RunHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Down",       0))                        as DownHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Setup",      0))                        as SetupHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Setup Down", 0))                        as SetupDownHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Non-Crewed", 0))                        as NonCrewedHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Setup Count",       0))                        as SetupCount,
+    Max(If(fSched = 1, "Max Gluer Cartons Per Hour", Null()))          as MaxGluerCPH,
+    Max(If(fSched = 1, "OEM Speed",                  Null()))          as OEMSpeed,
+    Sum(If(fSched = 1, "Time - Run",        0))                        as RunHours,
+    Sum(If(fSched = 1, "Time - Down",       0))                        as DownHours,
+    Sum(If(fSched = 1, "Time - Setup",      0))                        as SetupHours,
+    Sum(If(fSched = 1, "Time - Setup Down", 0))                        as SetupDownHours,
+    Sum(If(fSched = 1, "Time - Non-Crewed", 0))                        as NonCrewedHours,
+    Sum(If(fSched = 1, "Setup Count",       0))                        as SetupCount,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in OEE UOM",  0))                        as GoodQty_OEE,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM",  0))                        as ScrapQty_OEE,
     Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                             as BlanketWashHours,
+        AND fSched = 1, "Time - Down", 0))                             as BlanketWashHours,
     Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count",  0))                             as BlanketWashEvents,
+        AND fSched = 1, "Down Count",  0))                             as BlanketWashEvents,
     Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                             as FeederTripHours,
+        AND fSched = 1, "Time - Down", 0))                             as FeederTripHours,
     Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count",  0))                             as FeederTripEvents
+        AND fSched = 1, "Down Count",  0))                             as FeederTripEvents
 RESIDENT JobFact_Raw
 WHERE
     Date >= $(v2YearStart) AND Date < $(vCurrentWeekStart)
@@ -566,7 +566,7 @@ LOAD
     Only("Carton Style")                                                                        as CartonStyle,
     Max(NumberUp)                                                                               as NumberUp,
     "Time Plant Reason Key",
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                              as ReasonDownHours
+    Sum(If(fSched = 1, "Time - Down", 0))                              as ReasonDownHours
 RESIDENT JobFact_Raw
 WHERE
     Date >= $(v2YearStart)
@@ -638,27 +638,27 @@ LOAD
         If(WildMatch("Time Plant Reason Key", '*2MR0*'), 2,
             If(WildMatch("Time Plant Reason Key", '*3MR0*'), 3,
                 Null()))))                                                                      as MROClass,
-    Max(If(If(IsNull(fSched), 2, fSched) <= 1, "Max Gluer Cartons Per Hour", Null()))          as MaxGluerCPH,
-    Max(If(If(IsNull(fSched), 2, fSched) <= 1, "OEM Speed",                  Null()))          as OEMSpeed,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Run",        0))                        as RunHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Down",       0))                        as DownHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Setup",      0))                        as SetupHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Setup Down", 0))                        as SetupDownHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Non-Crewed", 0))                        as NonCrewedHours,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Setup Count",       0))                        as SetupCount,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Down Count",        0))                        as DownCount,
+    Max(If(fSched = 1, "Max Gluer Cartons Per Hour", Null()))          as MaxGluerCPH,
+    Max(If(fSched = 1, "OEM Speed",                  Null()))          as OEMSpeed,
+    Sum(If(fSched = 1, "Time - Run",        0))                        as RunHours,
+    Sum(If(fSched = 1, "Time - Down",       0))                        as DownHours,
+    Sum(If(fSched = 1, "Time - Setup",      0))                        as SetupHours,
+    Sum(If(fSched = 1, "Time - Setup Down", 0))                        as SetupDownHours,
+    Sum(If(fSched = 1, "Time - Non-Crewed", 0))                        as NonCrewedHours,
+    Sum(If(fSched = 1, "Setup Count",       0))                        as SetupCount,
+    Sum(If(fSched = 1, "Down Count",        0))                        as DownCount,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in OEE UOM",  0))                        as GoodQty_OEE,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM",  0))                        as ScrapQty_OEE,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in BUOM",     0))                        as GoodQty_BUOM,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in BUOM",     0))                        as ScrapQty_BUOM,
     Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                             as BlanketWashHours,
+        AND fSched = 1, "Time - Down", 0))                             as BlanketWashHours,
     Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count",  0))                             as BlanketWashEvents,
+        AND fSched = 1, "Down Count",  0))                             as BlanketWashEvents,
     Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))                             as FeederTripHours,
+        AND fSched = 1, "Time - Down", 0))                             as FeederTripHours,
     Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
-        AND If(IsNull(fSched), 2, fSched) <= 1, "Down Count",  0))                             as FeederTripEvents
+        AND fSched = 1, "Down Count",  0))                             as FeederTripEvents
 RESIDENT JobFact_Raw
 WHERE Date >= $(v13WeekStart) AND Date < $(vCurrentWeekStart)
 GROUP BY
@@ -1873,7 +1873,7 @@ DROP TABLE [BoardTypes_Rsn];
 NoConcatenate
 LOAD
     "WC Object ID",
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1,
+    Sum(If(fSched = 1,
         "Time - Run" + "Time - Down" + "Time - Setup"
         + "Time - Setup Down" + "Time - Non-Crewed", 0))               as TotalSchedHrs_2wk
 FROM [$(vFactQVD)]
@@ -1897,7 +1897,7 @@ LOAD
     "WC Object ID",
     Die,
     "Plant Material Key"                                                    as PltMatKey,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1,
+    Sum(If(fSched = 1,
         "Time - Run" + "Time - Down" + "Time - Setup"
         + "Time - Setup Down" + "Time - Non-Crewed", 0))                    as Die_SchedHrs_2wk
 FROM [$(vFactQVD)]
@@ -1934,7 +1934,7 @@ LOAD
     "Time Plant Reason Key",
     Only("Carton Style")                                                    as CartonStyle,
     Max(ApplyMap('OrderOp_NumberUp_Map', "Order Operation Key", Null()))    as NumberUp,
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))          as Cur_ReasonDownHours
+    Sum(If(fSched = 1, "Time - Down", 0))          as Cur_ReasonDownHours
 FROM [$(vFactQVD)]
 (qvd)
 WHERE Date >= $(v2WeekStart) AND Date < $(vCurrentWeekStart)
@@ -2012,7 +2012,7 @@ NoConcatenate
 LOAD
     WeekStart(Date, 0, $(vWeekStartDay))                                as WeekStart,
     "WC Object ID",
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1,
+    Sum(If(fSched = 1,
         "Time - Run" + "Time - Down" + "Time - Setup"
         + "Time - Setup Down" + "Time - Non-Crewed", 0))                as Wk_SchedHrs
 FROM [$(vFactQVD)]
@@ -2043,7 +2043,7 @@ LOAD
     WeekStart(Date, 0, $(vWeekStartDay))                                as WeekStart,
     "WC Object ID",
     "Time Plant Reason Key",
-    Sum(If(If(IsNull(fSched), 2, fSched) <= 1, "Time - Down", 0))       as Wk_ReasonDownHrs
+    Sum(If(fSched = 1, "Time - Down", 0))       as Wk_ReasonDownHrs
 FROM [$(vFactQVD)]
 (qvd)
 WHERE Date >= $(v4WeekStart) AND Date < $(vCurrentWeekStart)
