@@ -572,7 +572,7 @@ WHERE
     Date >= $(v2YearStart)
     AND Date < $(vCurrentWeekStart)
     AND Not IsNull("Time Plant Reason Key")
-    AND Not WildMatch("Time Plant Reason Key", '*MR0*')
+    AND Not WildMatch("Time Plant Reason Key", '*MR0*', '*PQBW*', '*PLG5*', '*PLDF*', '*PLF*')
     AND ApplyMap('QualifyingRuns_Map',
             Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die, 0) = 1
 GROUP BY
@@ -1939,7 +1939,7 @@ FROM [$(vFactQVD)]
 (qvd)
 WHERE Date >= $(v2WeekStart) AND Date < $(vCurrentWeekStart)
     AND Len(Trim("Time Plant Reason Key")) > 0
-    AND Not WildMatch("Time Plant Reason Key", '*MR0*')
+    AND Not WildMatch("Time Plant Reason Key", '*MR0*', '*PQBW*', '*PLG5*', '*PLDF*', '*PLF*')
 GROUP BY "WC Object ID", Die, "Plant Material Key", "Time Plant Reason Key";
 
 CurPeriod_DwnReason_DieLvl:
@@ -2048,7 +2048,7 @@ FROM [$(vFactQVD)]
 (qvd)
 WHERE Date >= $(v4WeekStart) AND Date < $(vCurrentWeekStart)
     AND Len(Trim("Time Plant Reason Key")) > 0
-    AND Not WildMatch("Time Plant Reason Key", '*MR0*')
+    AND Not WildMatch("Time Plant Reason Key", '*MR0*', '*PQBW*', '*PLG5*', '*PLDF*', '*PLF*')
 GROUP BY WeekStart(Date, 0, $(vWeekStartDay)), "WC Object ID", "Time Plant Reason Key";
 
 Rsn_Down_Streak_Raw:

@@ -161,6 +161,21 @@ Applied inline on every aggregation — never pre-filtered:
 - **Qty metrics** (Yield/Scrap in OEE UOM and BUOM): `If(IsNull(fSched), 2, fSched) >= 1` — unchanged; includes fSched=1 and fSched=2 (qty-only) rows.
 - Null fSched rows are treated as 2 for qty purposes; excluded from time calculations (fSched=1 exact filter naturally excludes null).
 
+## Downtime Reason Key Exclusions
+
+Three downtime-reason pipelines share a common `Not WildMatch` filter on `"Time Plant Reason Key"`:
+
+```qlik
+AND Not WildMatch("Time Plant Reason Key", '*MR0*', '*PQBW*', '*PLG5*', '*PLDF*', '*PLF*')
+```
+
+Applied in:
+- **Section 12** (`JobFact_DownReason_BSP_Agg`) — 2-year BSP source
+- **Section 40** (`CurPeriod_DwnReason_DieLvl_Raw`) — 1-week current-period actuals
+- **Section 41B** (`WeeklyDwnReason_Raw`) — 4-week streak source
+
+**Why:** `*MR0*` = MRO setup reasons (excluded since always). `*PQBW*` = BlanketWash events; `*PLG5*`, `*PLDF*`, `*PLF*` = FeederTrip events. These are already captured by the Avg Blanket Wash Time and Avg Feeder Trip Time KPIs — including them in Downtime Reason insights would double-count their sheet impact. The exclusion patterns must match exactly what the BlanketWash/FeederTrip `Sum(If(WildMatch(...)))` expressions use in the fact-table passes.
+
 ## KPI Direction Reference
 
 | Higher-is-better (P75 BSP, fires when Actual < BSP) | Lower-is-better (P25 BSP, fires when Actual > BSP) |
