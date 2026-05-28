@@ -58,7 +58,6 @@ This is the most complex step. `JobFact_Raw` is loaded once (full binary QVD rea
 | `JobFact_Job_BSP_L2_Agg` | Date + WC + Shift + Die + **PltMatKey** | L2 BSP source (PltMatKey as true GROUP BY, not Max()) |
 | `JobFact_Job_BSP_L2` | Same + board attributes resolved | L2 BSP qualifying runs (all KPIs) |
 | `JobFact_DownReason_BSP` | Date + WC + Shift + Die + PltMatKey + ReasonKey | Downtime reason BSP source |
-| `JobFact_ScrapReason_BSP` | Date + WC + Shift + Die + PltMatKey + ReasonKey | Scrap reason BSP source |
 | `JobFact_Scoring_Agg` | Date + WC + Die + Carton + PltMatKey + Shift + Operator + Order | 13-week trend + current period |
 | `JobFact_Scoring` | Same + board attributes | Final scoring source |
 
@@ -77,13 +76,15 @@ This single column is appended to all L2 BSP mapping keys, so no extra tables ar
 
 ### Step 4 — BSP Calculation (Sections 17–28)
 
-12 BSP tables are computed (L1/L2/L3 × Main KPI / Setup KPI / Downtime Reason / Scrap Reason). Each follows the same pattern:
+9 BSP tables are computed (L1/L2/L3 × Main KPI / Setup KPI / Downtime Reason). Each follows the same pattern:
 1. `BSP_X_Raw` — `FRACTILE()` grouped at the appropriate grain
 2. `BSP_X` — filtered to min run count threshold
 3. Raw table dropped
 
-- **Main/Downtime/Scrap KPIs:** `P75` for higher-is-better, `P25` for lower-is-better. Recalibrated from P90/P10 because L1 pools average ~min-threshold observations, where P10/P90 collapse to a single extreme value — not reliably chaseable.
-- **Setup KPIs:** add `MROClass` to all 3 levels (1MR0/2MR0/3MR0 from `WildMatch` on reason key).
+- **Main KPIs** (`BSP_Main_L1/L2/L3_Raw`): OEE (P75), Speed (P75), Downtime % (P25), Downtime Hrs (P25), Scrap Rate (P25). Net Throughput Rate removed.
+- **Setup KPIs** (`BSP_Setup_L1/L2/L3_Raw`): Avg MR Time / `SetupHrsPerEvent` (P25). Setup Frequency removed. MROClass added to grain at all 3 levels.
+- **New machine-level KPIs** (Sections 29A–29B): Avg Blanket Wash Time (P25, `BSP_BlanketWashTime_L1/L2/L3`), Avg Feeder Trip Time (P25, `BSP_FeederTripTime_L1/L2/L3`).
+- **Reason KPIs:** Downtime Reason (P25) only. Scrap Reason removed — Scrap Rate (the parent lever) is still computed as a Main KPI.
 - **L2 Main and L2 Setup BSP** read from `JobFact_Job_BSP_L2` (not `JobFact_Job_BSP`) because L2 requires board attributes which only the L2 source resolves correctly via the PltMatKey GROUP BY.
 
 ### Step 5 — BSP Resolution + Scoring (Sections 29–41)
@@ -91,43 +92,50 @@ This single column is appended to all L2 BSP mapping keys, so no extra tables ar
 All 12 BSP tables are immediately converted to 36+ mapping tables then dropped — this eliminates all synthetic keys from keeping them as regular tables.
 
 Then:
-- **Section 30–31:** `WeeklyDieKPI` → `WeeklyDieBSP` — 3-level `Coalesce()` fallback per KPI per die per week. `CoveredSchedHours` = SchedHours only for dies where OEE BSP resolved. `WeeklyDieKPI` carries `Department`, `CartonStyle`, `NumberUp` (all Max/Only aggregated at week+die grain); `WeeklyDieBSP` derives `L2_ExtraDim` once and injects it into every L2 mapping lookup key.
+- **Section 30–31:** `WeeklyDieKPI` → `WeeklyDieBSP` — 3-level `Coalesce()` fallback per KPI per die per week. `CoveredSchedHours` = SchedHours only for dies where OEE BSP resolved. `WeeklyDieKPI` carries `Department`, `CartonStyle`, `NumberUp`, **`MaxSpeed`**, `MaterialDescription` (all Max/Only aggregated at week+die grain); `WeeklyDieBSP` derives `L2_ExtraDim` once and injects it into every L2 mapping lookup key. BSP fields resolved: OEE, Speed, DT%, DT Hrs, Scrap Rate, SetupHrsPerEvent, BlanketWashTime, FeederTripTime.
 - **Section 32:** `WeeklyMachineBSP` — weighted BSP per machine+week using SchedHours as weights across dies. Only covered dies contribute to numerator and denominator.
-- **Section 33–35:** `WeeklyMachineKPI_Sorted` → streak calculation using `Peek()`. Must be sorted by `Plant + WC + WeekStart ASC` before `Peek()` runs or streaks compute incorrectly.
-- **Section 36–37:** `CurrentPeriod` — 1-week aggregation (last complete week, `v2WeekStart = vLastWeekStart`). `Cur_SchedHours = Sum(Wk_SchedHours)`. `Cur_RunHours = Sum(Wk_RunHours)`. `Cur_SetupEventCount = Sum(Wk_SetupCount)`. `Cur_BSP_CoveragePct = Sum(Wk_CoveredSchedHours) / Sum(Wk_TotalSchedHours)` for that week. `Cur_RunHours` and `Cur_SetupEventCount` are carried through Sections 35 and 36 from `WeeklyMachineKPI` so they survive into `CurrentPeriod`.
-- **Sections 38–41:** Reason denominator maps and current-period reason aggs (die grain → machine+reason grain with weighted BSP fallback). Section 38 also builds `Department_Rsn_Map` (WC → Department). Sections 40–41 re-read `vFactQVD` for the 1-week window and carry `CartonStyle` (via `Only()`) and `NumberUp` (via `Max(ApplyMap('OrderOp_NumberUp_Map', ...))`), then apply `Department_Rsn_Map` to derive the L2_ExtraDim string inline in each L2 Coalesce key.
+- **Section 33–35:** `WeeklyMachineKPI` carries `Wk_MaxSpeed = Max(MaxSpeed)`, `Wk_BlanketWashTime`, `Wk_FeederTripTime`, `Wk_BlanketWashEvents`, `Wk_FeederTripEvents`. `WeeklyMachineKPI_Sorted` → streak calculation using `Peek()`. Active streaks: OEE, Speed, DT%, DT Hrs, Scrap Rate, SetupHrsPerEvent (higher-is-better), BlanketWashTime, FeederTripTime (lower-is-better). Must be sorted by `Plant + WC + WeekStart ASC` before `Peek()` runs or streaks compute incorrectly.
+- **Section 36–37:** `CurrentPeriod` — 1-week aggregation (last complete week, `v2WeekStart = vLastWeekStart`). `Cur_SchedHours = Sum(Wk_SchedHours)`. `Cur_RunHours = Sum(Wk_RunHours)`. `Cur_SetupEventCount = Sum(Wk_SetupCount)`. `Cur_MaxSpeed = Max(Wk_MaxSpeed)` for the last week. `Cur_BSP_CoveragePct = Sum(Wk_CoveredSchedHours) / Sum(Wk_TotalSchedHours)` for that week. New current-period fields: `Cur_BlanketWashTime = Avg(Wk_BlanketWashTime)`, `Cur_FeederTripTime = Avg(Wk_FeederTripTime)`, `Cur_BlanketWashEvents = Sum(Wk_BlanketWashEvents)`, `Cur_FeederTripEvents = Sum(Wk_FeederTripEvents)`.
+- **Sections 38–40:** Reason denominator maps and current-period downtime reason aggs (die grain → machine+reason grain with weighted BSP fallback). Section 38 also builds `Department_Rsn_Map` (WC → Department). Section 40 re-reads `vFactQVD` for the 1-week window and carries `CartonStyle` (via `Only()`) and `NumberUp` (via `Max(ApplyMap('OrderOp_NumberUp_Map', ...))`), then applies `Department_Rsn_Map` to derive the L2_ExtraDim string inline in each L2 Coalesce key. Section 41 (Scrap Reason aggregation) removed.
 
 ### Step 5 (addition) — Section 41B: 4-week reason streak
 
-Per-reason `Streak_4wk` (range 0–4) is the count of weeks in the last 4 full weeks where the reason's weekly rate exceeded its current-period (1-week) BSP benchmark. Scope is **Downtime (`tPltRsnKey`) and Scrap (`sPltRsnKey`) only** — Feeder/Blanket rows emit `Streak_4wk = 0` (no weekly pipeline). Weekly denominator maps (`WeeklySchedHrs_Rsn_Map`, `WeeklyTotalQty_Rsn_Map`) and BSP-benchmark maps (`Rsn_BSP_Down_Map`, `Rsn_BSP_Scrap_Map`) are built and dropped locally. Output maps consumed by Section 44: `Rsn_Down_Streak_Map`, `Rsn_Scrap_Streak_Map`.
+Per-reason `Streak_4wk` (range 0–4) is the count of weeks in the last 4 full weeks where the reason's weekly rate exceeded its current-period (1-week) BSP benchmark. Scope is **Downtime (`tPltRsnKey`) only** — Scrap Reason was removed. Weekly denominator map `WeeklySchedHrs_Rsn_Map` and BSP-benchmark map `Rsn_BSP_Down_Map` are built and dropped locally. Output map consumed by Section 44: `Rsn_Down_Streak_Map`. `Streak_4wk` is a **display field only** — it no longer multiplies `Sheet_Impact`/`OEE_Impact`.
 
 ### Step 6 — Insight Records, Scoring, Store (Sections 42–48)
 
-- **Section 42:** `InsightRecords_Raw` — 10 `LOAD` blocks (one per KPI: OEE, Availability, Performance, Quality, Speed, Net Throughput Rate, Downtime %, Scrap Rate, Setup Hrs/Event, Setup Time %) with `Concatenate`. Insight fires when `Cur_Actual` is worse than `BSP_Benchmark` **AND** `Cur_BSP_CoveragePct > 0.5`. Each block emits `Gap_Pct`, `GapHrs`, `Streak_4wk` (`RangeMin(Streak_X, 4)`), and **`KPI_Category`** (`'Outcome'` for Outcome KPIs; `'Lever - <Parent Outcome>'` for Lever KPIs — e.g. `'Lever - OEE'`, `'Lever - Availability'`). Percentage KPIs format `Cur_Actual_Fmt` / `BSP_Benchmark_Fmt` with `Num(..., '0.00%')`. **Ratio / absolute KPIs (Speed, Net Throughput Rate, Setup Hrs/Event) pass the raw numeric through unchanged** so front-end formatting controls display.
-- **Section 43:** Unified scoring. `OEE_Impact = Round(GapHrs × (1 + Streak_4wk/4), 0.01)` where `GapHrs` is the true absolute scheduled-hours loss computed per-KPI in Section 42:
-  - **Pct-based KPIs** (OEE, Availability, Performance, Quality, Downtime %, Scrap Rate, Setup Time %): `GapHrs = (BSP − Actual) × Cur_SchedHours` (absolute gap × hours, not relative gap)
-  - **Speed**: `GapHrs = (BSP_Speed − Cur_Speed) / BSP_Speed × Cur_RunHours` (speed deficit fraction × run-hours)
-  - **Net Throughput Rate**: `GapHrs = (BSP_NTR − Cur_NTR) / BSP_NTR × (Cur_RunHours + Cur_DowntimeHrs)` (rate-deficit fraction × production-time hours)
-  - **Setup Hrs/Event**: `GapHrs = (Cur_SetupHrsPerEvent − BSP_SetupHrsPerEvent) × Cur_SetupEventCount` (excess hrs/event × event count = total excess setup hours)
-  - `Gap_Pct` is unchanged (still relative gap for display). `GapHrs` is an intermediate-only field, not in the final schema. WHERE filter uses `GapHrs > 0`. No more `Composite_Score`, `Gap_Score`, `Trend_Score`. A `Null() as Reasons` column is seeded here so Main rows align with Reason rows downstream.
-- **Section 44:** Reason insights. Downtime and scrap reasons resolve `Reasons` via `ApplyMap('TimeReason_Name_Map', …)` / `ApplyMap('ScrapReason_Name_Map', …)`; `Streak_4wk` from the Section 41B maps; `OEE_Impact = Round(GapHrs × (1 + Streak_4wk/4), 0.01)` with `GapHrs` expressed in scheduled hours (scrap uses `ApplyMap('CurSchedHrs_Map', ...)` to convert %-gap × qty → hours). **`tPltRsnKey` / `sPltRsnKey` are NOT emitted** — the single `Reasons` column carries the readable name for both streams, with `KPI_Name ∈ {'Downtime Reason', 'Scrap Reason'}` discriminating type. `KPI_Category`: Downtime Reason → `'Lever - Downtime %'`; Scrap Reason → `'Lever - Scrap Rate'`.
-- **Sections 44B / 44C:** Feeder (3 metrics) and Blanket (3 metrics) rows emit `Reasons` = literal KPI name (e.g. `'Feeder DT%'`), `Streak_4wk = 0`, and `OEE_Impact = GapHrs` (no trend uplift). Count Rate / Per10K metrics pass raw numeric to `Cur_Actual_Fmt` / `BSP_Benchmark_Fmt` (no `Num` wrapper). **OEE_Impact for Count Rate and Per10K** uses `excess_trips × avg_hours_per_trip` where `excess_trips = Cur_DownCount − BSP_Rate × denominator` and `avg_hours_per_trip = Cur_DownHours / Cur_DownCount` — so the result is true excess downtime hours in the same unit as DT%. All Feeder and Blanket rows carry `KPI_Category = 'Lever - Downtime %'`.
-- **Section 45:** Main KPIs ranked `ORDER BY Plant, OEE_Impact DESC`. Unified schema matches Reason rows.
-- **Section 46:** Reason insights ranked `ORDER BY Plant, WC, KPI_Name, OEE_Impact DESC`. **Top-3 cap** applied to `KPI_Name IN ('Downtime Reason', 'Scrap Reason')` only — Feeder/Blanket one-per-machine rows pass through uncapped.
-- **Section 47:** Concatenate MainInsightRecords + ReasonInsightRecords into `InsightRecords`. Drop `TimeReason_Name_Map` / `ScrapReason_Name_Map` here.
-- **Section 48:** Incremental store — unchanged mechanics. The QVD's historical rows pre-dating this refactor will have legacy fields (`tPltRsnKey`, `Composite_Score`, `Impact_Score`, `Streak_13wk`) as NULL on new writes and new fields (`Reasons`, `OEE_Impact`, `Streak_4wk` for reasons) as NULL on old rows — Qlik concat tolerates this. A one-time full reload cleans up the QVD if desired.
-- **Section 49:** `MachineWeekSummary` mart — one row per machine per week, with top-2 Outcomes and top-3 Levers pre-pivoted from `InsightRecords`. Joined to `PlantManagers.xlsx` (Plant → Manager_Email, CC_List). Stored as both `.qvd` and `.csv` (comma-delimited) to `OPEXinsights/MachineWeekSummary.csv` on SharePoint. The `.csv` is the feed for the Python notifier in `notifier/`.
+- **Section 42:** `InsightRecords_Raw` — 7 `LOAD` blocks (one per KPI: OEE, Speed, Downtime %, Scrap Rate, Avg MR Time, Avg Blanket Wash Time, Avg Feeder Trip Time) with `Concatenate`. **Removed:** ARQ, Net Throughput Rate, Setup Frequency, Availability, Performance %, Quality Rate, Setup Time %. Insight fires when `Cur_Actual` is worse than `BSP_Benchmark` **AND** `Cur_BSP_CoveragePct > 0.5`. Each block emits `Gap_Pct`, `Sheet_Gap`, `Streak_4wk` (`RangeMin(Streak_X, 4)`), and **`KPI_Category`** (`'Outcome'` for OEE only; `'Lever - OEE'` for Speed/Avg MR Time; `'Lever - Downtime %'` for Downtime %/Avg Blanket Wash Time/Avg Feeder Trip Time; `'Lever - Scrap Rate'` for Scrap Rate). Percentage KPIs format `Cur_Actual_Fmt` / `BSP_Benchmark_Fmt` with `Num(..., '0.00%')`. **Ratio / absolute KPIs pass the raw numeric through unchanged.** `Insight_ID` token for Avg MR Time remains `SETUPHRSEV` for QVD continuity.
 
-**`MachineWeekSummary.csv` schema** (Section 49 STORE output, in column order):
-```
-Plant, WC Object ID, Plant - WC, Department, Period_Start,
-Manager_Email, CC_List, Total_Sheet_Impact,
-Outcome_1_Name, Outcome_1_Sheets, Outcome_2_Name, Outcome_2_Sheets,
-Lever_1_Name, Lever_1_Reasons, Lever_1_Sheets, Lever_1_Gap_Pct, Lever_1_Streak, Lever_1_Parent_Outcome,
-Lever_2_Name, Lever_2_Reasons, Lever_2_Sheets, Lever_2_Gap_Pct, Lever_2_Streak, Lever_2_Parent_Outcome,
-Lever_3_Name, Lever_3_Reasons, Lever_3_Sheets, Lever_3_Gap_Pct, Lever_3_Streak, Lever_3_Parent_Outcome
-```
-`Plant` is a plant number (joins to `G.WCobjectID` / `Plant` in `Findings.csv`). `Total_Sheet_Impact` is the sum of `OEE_Impact` converted to sheets. Lever columns are contiguous — an absent lever has all its fields as NULL.
+  **Sheet_Gap formulas (in sheets lost vs BSP):**
+  - **OEE**: `(BSP_OEE − Cur_OEE) × Cur_SchedHours × Cur_MaxSpeed` — uses `Cur_MaxSpeed` (OEM Speed or Max Gluer CPH), not BSP Speed, because OEE denominator is SchedHours × MaxSpeed
+  - **Downtime %**: `(Cur_DTPct − BSP_DTPct) × Cur_SchedHours × Cur_BSP_Speed` — numerator is `(DownHours + SetupDownHours) / SchedHours` at all levels (current + L1/L2/L3 BSP). Setup Down counts as machine downtime per plant definition `(Time − Down) + (Time − Setup Down)`. Reason-level DT (`L*_BSP_ReasonDownPct`) is unchanged — reason codes attribute only `DownHours`; Setup Down is its own bucket.
+  - **Scrap Rate**: `(Cur_ScrapRate − BSP_ScrapRate) × Cur_RunHours × Cur_BSP_Speed` — RunHours (not SchedHours) because scrap only accumulates during production
+  - **Speed**: `(BSP_Speed − Cur_Speed) × Cur_RunHours` — sheets directly, speed deficit × run hours
+  - **Avg MR Time**: `(Cur_SetupHrsPerEvent − BSP_SetupHrsPerEvent) × Cur_SetupEventCount × Cur_BSP_Speed` — excess duration × actual event count × speed
+  - **Avg Blanket Wash Time**: `(Cur_BlanketWashTime − BSP_BlanketWashTime) × Cur_BlanketWashEvents × Cur_BSP_Speed`
+  - **Avg Feeder Trip Time**: `(Cur_FeederTripTime − BSP_FeederTripTime) × Cur_FeederTripEvents × Cur_BSP_Speed`
+
+- **Section 43:** Unified scoring. `Sheet_Impact = Round(Sheet_Gap, 0.01)`. **Streak multiplier removed** — `Streak_4wk` is emitted as a display field only and no longer affects `Sheet_Impact`. WHERE filter uses `Sheet_Gap > 0`. A `Null() as Reasons` column is seeded here so Main rows align with Reason rows downstream.
+- **Section 44:** Reason insights. Downtime reasons resolve `Reasons` via `ApplyMap('TimeReason_Name_Map', …)`; `Streak_4wk` from `Rsn_Down_Streak_Map`. **`tPltRsnKey` is NOT emitted** — the single `Reasons` column carries the readable name. `KPI_Category`: Downtime Reason → `'Lever - Downtime %'`. Scrap Reason block removed.
+- **Section 45:** Main KPIs ranked `ORDER BY Plant, OEE_Impact DESC`. Unified schema matches Reason rows.
+- **Section 46:** Reason insights ranked `ORDER BY Plant, WC, KPI_Name, OEE_Impact DESC`. **Top-3 cap** applied to `KPI_Name = 'Downtime Reason'` only.
+- **Section 47:** Concatenate MainInsightRecords + ReasonInsightRecords into `InsightRecords`. Drop `TimeReason_Name_Map` here.
+- **Section 48:** Incremental store — unchanged mechanics.
+- **Section 49:** `MachineWeekSummary.csv` export. `Total_Sheet_Impact` = the OEE row's `Sheet_Impact` only (`WHERE KPI_Name = 'OEE'`). Levers ladder into OEE so summing all rows double-counts; OEE Sheet_Impact captures total loss vs BSP. Machines with no OEE insight (OEE >= BSP) are excluded. The QVD's historical rows pre-dating this refactor will have legacy fields (`tPltRsnKey`, `Composite_Score`, `Impact_Score`, `Streak_13wk`) as NULL on new writes and new fields (`Reasons`, `OEE_Impact`, `Streak_4wk` for reasons) as NULL on old rows — Qlik concat tolerates this. A one-time full reload cleans up the QVD if desired.
+
+  **Sub-reason swap rule (Section 49):** Before writing `Lever_N_*` columns, each occurrence of `Downtime %` in the top-3 `'Lever - OEE'` pool is replaced by its top-2 sub-reasons (by `Sheet_Impact`). Sub-reason source: `KPI_Category = 'Lever - Downtime %'` (Downtime Reason only — Scrap Reason removed). Each swap expands one parent slot into up to 2 sub-reason rows; total lever count grows from 3 to up to 4. Unaffected parent levers keep their original rank position; sub-reasons are inserted at the parent's position ordered by Sheet_Impact DESC. **Fallback:** if a machine has Downtime % in top-3 but zero qualifying sub-reason rows, the parent stays in place.
+
+  **Driver parent clause:** Two columns are added to the export (retained for data completeness even though the email no longer renders the "driven primarily by" sentence):
+  - `Driver_Parent_Name` — whichever of `{Downtime %, Scrap Rate}` had the highest `Sheet_Impact` in the original top-3; `Null()` if neither appeared.
+  - `Driver_Parent_Sheets` — that parent's `Sheet_Impact`.
+
+  **Section 49 intermediate tables:**
+  - `Temp_PoolLeversRanked` — top-3 `'Lever - OEE'` rows ranked per machine.
+  - `Temp_DriverParent` → `DriverParent_Name_Map` / `DriverParent_Sheets_Map` — keyed by `Plant|WC Object ID`.
+  - `Temp_SubLeversRanked` — sub-reason rows ranked per machine+parent, `Sub_Rank` 1..2.
+  - 14 `Sub_R{1,2}_*_Map` tables — keyed by `Plant|WC Object ID|Sub_Parent`; one map per (rank × field).
+  - `Temp_FinalLevers` — assembled via 6 CONCATENATE passes (pool pass + fallback pass for unaffected parents, sub_R1 pass, sub_R2 pass, each for pool and fallback sources).
+  - `Temp_FinalLeversRanked` — re-ranked by `Order_Key ASC`; 40 position maps (8 fields × 5 ranks) written then all intermediates dropped.
 
 **Final `InsightRecords` schema** (both main + reason rows):
 ```
@@ -153,7 +161,7 @@ Reason rows have `Cur_BSP_CoveragePct / Cur_BSP_ConfScore / Cur_BSP_PoolSize / B
 | Department-specific L2 grain via `L2_ExtraDim` | A single derived column collapses three grain variants (empty / CartonStyle / NumberUp) into one field, avoiding three parallel L2 pipelines. All 12 L2 BSP tables and their mapping keys include this field — empty string for default departments means existing behaviour is preserved for Web/Sheetfed Printing/Other with no separate code path. |
 | `Only()` for string fields in aggregations, `Max()` for numerics | `Max()` on a text field in Qlik returns NULL. `Only()` returns the value if the group contains exactly one distinct value (else NULL, which acts as a data-quality signal). Used for `CartonStyle` everywhere it is aggregated. `NumberUp` is numeric so `Max()` is correct. |
 | `OEE_Impact` is true hours lost vs BSP | All KPIs now use absolute-gap × time-denominator; `Gap_Pct` keeps the relative display. Scoring numbers were wrong units — plant leaders read `OEE_Impact` as hours. |
-| `KPI_Category` encodes Outcome or Lever-with-parent | Outcome rows: `'Outcome'` (OEE, Availability, Quality, Downtime %, Scrap Rate, Net Throughput Rate). Lever rows: `'Lever - <Parent Outcome>'` — each Lever names the Outcome it directly moves: Performance → `'Lever - OEE'`; Speed → `'Lever - Net Throughput Rate'`; Setup Hrs/Event & Setup Time % → `'Lever - Availability'`; Downtime Reason, Feeder (×3), Blanket (×3) → `'Lever - Downtime %'`; Scrap Reason → `'Lever - Scrap Rate'`. Rationale: enables the weekly narrative "you lost N hours on Outcome A — fix these Levers" by joining Lever rows to their parent Outcome via `Replace(KPI_Category, 'Lever - ', '')`. Front-end filter changes from `KPI_Category = 'Lever'` to `WildMatch(KPI_Category, 'Lever - *')`. Outcome rows stay for scorecard context. |
+| `KPI_Category` encodes Outcome or Lever-with-parent | **Single Outcome:** `'Outcome'` applies to OEE only. Main levers (`'Lever - OEE'`): Speed, Downtime %, Scrap Rate, Avg MR Time. New machine-level levers (`'Lever - Downtime %'`): Avg Blanket Wash Time, Avg Feeder Trip Time. Sub-levers: Downtime Reason → `'Lever - Downtime %'`. Scrap Reason removed — no sub-levers for Scrap Rate. Joining lever rows to their parent via `Replace(KPI_Category, 'Lever - ', '')` resolves to OEE for main levers; sub-levers resolve to their parent lever name. Front-end filter: `WildMatch(KPI_Category, 'Lever - *')`. |
 | BSP percentile P25/P75, not P10/P90 | At current ~15–35 run pool sizes, P10/P90 of N obs ≈ a single extreme value — fragile and non-chaseable. P25 of 15 obs is the 4th-best value, demanding but stable. Min thresholds raised to L1=15/L2=25/L3=35 simultaneously to keep ambition. `Cur_BSP_PoolSize` (SchedHours-weighted avg run-count of the resolved BSP level) is emitted in `InsightRecords` so leadership can flag thin-pool benchmarks. |
 | `Cur_BSP_CoveragePct` is 1-week coverage | `Sum(CoveredSchedHours) / Sum(TotalSchedHours)` over the single current week (`v2WeekStart = vLastWeekStart`). |
 | Coverage threshold is strict `> 0.5` | Not `>= 0.5`. Exactly 50% coverage does not pass. |
@@ -167,15 +175,34 @@ Reason rows have `Cur_BSP_CoveragePct / Cur_BSP_ConfScore / Cur_BSP_PoolSize / B
 ## fSched Filtering Rules
 
 Applied inline on every aggregation — never pre-filtered:
-- **Time metrics** (RunHours, DownHours, SetupHours, SetupDownHours, NonCrewedHours): `If(IsNull(fSched), 2, fSched) <= 1`
-- **Qty metrics** (Yield/Scrap in OEE UOM and BUOM): `If(IsNull(fSched), 2, fSched) >= 1`
-- Null fSched rows are treated as 2 (qty-only rows).
+- **Time metrics** (RunHours, DownHours, SetupHours, SetupDownHours, NonCrewedHours): `fSched = 1` — exact match only. Matches the dashboard formula `{<fSched={'1'}>}`. fSched=0 rows are excluded (they were previously included under the old `<= 1` filter and inflated the OEE denominator for machines with fSched=0 time rows).
+- **Qty metrics** (Yield/Scrap in OEE UOM and BUOM): `If(IsNull(fSched), 2, fSched) >= 1` — unchanged; includes fSched=1 and fSched=2 (qty-only) rows.
+- Null fSched rows are treated as 2 for qty purposes; excluded from time calculations (fSched=1 exact filter naturally excludes null).
+
+## Downtime Reason Key Exclusions
+
+Three downtime-reason pipelines share a common `Not WildMatch` filter on `"Time Plant Reason Key"`:
+
+```qlik
+AND Not WildMatch("Time Plant Reason Key", '*MR0*', '*PQBW*', '*PLG5*', '*PLDF*', '*PLF*')
+```
+
+Applied in:
+- **Section 12** (`JobFact_DownReason_BSP_Agg`) — 2-year BSP source
+- **Section 40** (`CurPeriod_DwnReason_DieLvl_Raw`) — 1-week current-period actuals
+- **Section 41B** (`WeeklyDwnReason_Raw`) — 4-week streak source
+
+**Why:** `*MR0*` = MRO setup reasons (excluded since always). `*PQBW*` = BlanketWash events; `*PLG5*`, `*PLDF*`, `*PLF*` = FeederTrip events. These are already captured by the Avg Blanket Wash Time and Avg Feeder Trip Time KPIs — including them in Downtime Reason insights would double-count their sheet impact. The exclusion patterns must match exactly what the BlanketWash/FeederTrip `Sum(If(WildMatch(...)))` expressions use in the fact-table passes.
 
 ## KPI Direction Reference
 
 | Higher-is-better (P75 BSP, fires when Actual < BSP) | Lower-is-better (P25 BSP, fires when Actual > BSP) |
 |---|---|
-| OEE, Availability, Performance, Quality, Speed, Net Throughput Rate | Downtime %, Scrap Rate, Setup Hrs/Event, Setup Time % |
+| OEE, Speed | Downtime %, Scrap Rate, Avg MR Time, Avg Blanket Wash Time, Avg Feeder Trip Time |
+
+**Removed KPIs (no longer computed):** ARQ, Net Throughput Rate, Setup Frequency, Availability, Performance %, Quality Rate, Setup Time %
+
+**Email display formatting (notifier):** Avg MR Time, Avg Blanket Wash Time, Avg Feeder Trip Time are stored in Qlik as fractional hours but displayed in the email digest as integer minutes (e.g. 0.45 hr → `27 Mins`). Speed is displayed as an integer (no decimal). Formatting applied in `notifier/src/grouper.py:_format_kpi_value`.
 
 ## MaxSpeed Logic
 
@@ -187,15 +214,22 @@ Applied inline on every aggregation — never pre-filtered:
 L1 Main/Downtime BSP   : Plant|WCObjectID|Die
 L2 Main/Downtime BSP   : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|L2_ExtraDim
 L3 Main/Downtime BSP   : Plant|WCObjectID
-L1 Setup BSP           : Plant|WCObjectID|Die|MROClass
-L2 Setup BSP           : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|L2_ExtraDim|MROClass
-L3 Setup BSP           : Plant|WCObjectID|MROClass
-L1 Downtime Reason BSP : Plant|WCObjectID|Die|TimeReasonKey
-L2 Downtime Reason BSP : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|L2_ExtraDim|TimeReasonKey
-L3 Downtime Reason BSP : Plant|WCObjectID|TimeReasonKey
-(Scrap Reason same pattern with ScrapReasonKey)
-QualifyingRuns_Map     : Date|WCObjectID|ShiftCode|Die
+L1 Setup BSP (Avg MR Time) : Plant|WCObjectID|Die|MROClass|MaterialDescription
+L2 Setup BSP               : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|L2_ExtraDim|MROClass
+L3 Setup BSP               : Plant|WCObjectID|MROClass
+L1 BlanketWashTime BSP     : Plant|WCObjectID|Die
+L2 BlanketWashTime BSP     : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|L2_ExtraDim
+L3 BlanketWashTime BSP     : Plant|WCObjectID
+L1 FeederTripTime BSP      : Plant|WCObjectID|Die
+L2 FeederTripTime BSP      : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|L2_ExtraDim
+L3 FeederTripTime BSP      : Plant|WCObjectID
+L1 Downtime Reason BSP     : Plant|WCObjectID|Die|TimeReasonKey
+L2 Downtime Reason BSP     : Plant|WCObjectID|BoardTypeGroup|BoardCaliper|L2_ExtraDim|TimeReasonKey
+L3 Downtime Reason BSP     : Plant|WCObjectID|TimeReasonKey
+QualifyingRuns_Map         : Date|WCObjectID|ShiftCode|Die
 ```
+
+**MaterialDescription** is brought in via `MaterialDesc_Map` (built in Step 2 from `Materials_Temp`, keyed on `Material`). Applied as: `ApplyMap('MaterialDesc_Map', ApplyMap('Material_Map', PltMatKey, Null()), Null())`. If a die runs multiple materials in a week, `Only(MaterialDescription)` returns NULL → L1 lookup misses → falls back to L2 (intended behaviour for mixed-material dies).
 
 **`L2_ExtraDim` values by department:**
 ```

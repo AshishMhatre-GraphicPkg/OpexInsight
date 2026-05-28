@@ -74,3 +74,22 @@ def fetch_findings_csv(config: dict, env: dict) -> bytes:
 
     log.info("Fetched findings: %s bytes", len(content.content))
     return content.content
+
+
+def fetch_pm_xlsx(config: dict, env: dict) -> bytes:
+    """Pull PMComplianceDump.xlsx from SharePoint."""
+    token = _get_token(
+        env["AZURE_TENANT_ID"], env["AZURE_CLIENT_ID"], env["AZURE_CLIENT_SECRET"]
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    file_path = config["sharepoint_pm_path"]
+
+    meta_url = _file_url(config, file_path)
+    meta = requests.get(meta_url, headers=headers, timeout=30)
+    meta.raise_for_status()
+    download_url = meta.json()["@microsoft.graph.downloadUrl"]
+    content = requests.get(download_url, timeout=60)
+    content.raise_for_status()
+
+    log.info("Fetched PM compliance: %s bytes", len(content.content))
+    return content.content
