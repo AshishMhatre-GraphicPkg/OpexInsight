@@ -29,6 +29,12 @@ LET v2WeekStart       = Num(WeekStart(Today(),  -1, $(vWeekStartDay)));
 LET v4WeekStart       = Num(WeekStart(Today(),  -4, $(vWeekStartDay)));
 LET v13WeekStart      = Num(WeekStart(Today(), -13, $(vWeekStartDay)));
 LET v2YearStart = Num(MonthStart(AddMonths(Today(), -24)));
+LET v6MonthStart = Num(MonthStart(AddMonths(Today(), -6)));
+
+// Bucket label for order-size-aware Scrap BSP. Call as: $(vScrapBucket(TotalSheets))
+SET vScrapBucket = If($1 < 5000,'XLow', If($1 < 10000,'VLow', If($1 < 25000,'Low',
+    If($1 < 50000,'LowMid', If($1 < 100000,'Mid', If($1 < 250000,'MidHigh',
+    If($1 < 500000,'High', If($1 < 1000000,'VHigh', If($1 < 2500000,'XHigh','Mega')))))))));
 
 SET vBSP_L1_Min        = 15;
 SET vBSP_L2_Min        = 25;
@@ -732,6 +738,44 @@ LOAD
 RESIDENT JobFact_Scoring_Agg;
 
 DROP TABLE JobFact_Scoring_Agg;
+
+
+// ============================================================
+// SECTION 15B: ORDER-LEVEL SCRAP BSP SOURCE
+// Grain  : WC Object ID + Order
+// Window : v6MonthStart to last completed week
+// Filter : SetupCount = 1 (single-setup orders only)
+// Used in Section 28B (Tab 4) to build BSP_ScrapBucket_Map
+// ============================================================
+
+JobFact_Order_Scrap_Agg:
+NoConcatenate
+LOAD
+    "WC Object ID",
+    "Order",
+    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in OEE UOM" + "Scrap in OEE UOM", 0))  as TotalSheets,
+    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM", 0))                        as ScrapSheets,
+    Sum(If(fSched = 1, "Setup Count", 0))                                                      as SetupCount
+RESIDENT JobFact_Raw
+WHERE Date >= $(v6MonthStart) AND Date < $(vCurrentWeekStart)
+GROUP BY "WC Object ID", "Order";
+
+JobFact_Order_Scrap:
+NoConcatenate
+LOAD
+    ApplyMap('Plant_Map', "WC Object ID", 'Unknown')  as Plant,
+    "WC Object ID",
+    "Order",
+    TotalSheets,
+    ScrapSheets,
+    ScrapSheets / TotalSheets                         as ScrapPct_Order,
+    $(vScrapBucket(TotalSheets))                      as ScrapBucket
+RESIDENT JobFact_Order_Scrap_Agg
+WHERE SetupCount = 1 AND TotalSheets > 0;
+
+DROP TABLE JobFact_Order_Scrap_Agg;
+
+
 DROP TABLE JobFact_Raw;
 DROP MAPPING TABLE Plant_Map;
 DROP MAPPING TABLE Department_Map;
@@ -748,7 +792,7 @@ DROP MAPPING TABLE MaterialDesc_Map;
 // Grain  : Plant + WC Object ID + Die
 // Min    : 10 qualifying runs
 // P90    : OEE, Availability, Performance, Quality, Speed
-// P10    : Downtime %, Downtime Hrs, Scrap Rate
+// P10    : Downtime %, Downtime Hrs, Scrap Loss (bucket-aware — see Section 28B)
 // ============================================================
 
 BSP_Main_L1_Raw:
@@ -1123,6 +1167,41 @@ DROP TABLE BSP_FeederTripTime_L3_Raw;
 
 DROP TABLE JobFact_Job_BSP;
 DROP TABLE JobFact_Job_BSP_L2;
+
+
+// ============================================================
+// SECTION 28B: SCRAP BUCKET BSP
+// Grain  : Plant + WC Object ID + ScrapBucket
+// Metric : P25 ScrapPct (lower is better)
+// No minimum-N filter — thin buckets are flagged by PoolSize
+// Source : JobFact_Order_Scrap (built in Section 15B, Tab 3)
+// ============================================================
+
+BSP_ScrapBucket_Raw:
+NoConcatenate
+LOAD
+    Plant,
+    "WC Object ID",
+    ScrapBucket,
+    Count(1)                              as ScrapBucket_PoolSize,
+    FRACTILE(ScrapPct_Order, 0.25)        as BSP_ScrapPct
+RESIDENT JobFact_Order_Scrap
+GROUP BY Plant, "WC Object ID", ScrapBucket;
+
+BSP_ScrapBucket_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID] & '|' & ScrapBucket,
+    BSP_ScrapPct
+RESIDENT BSP_ScrapBucket_Raw;
+
+BSP_ScrapBucketPool_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID] & '|' & ScrapBucket,
+    ScrapBucket_PoolSize
+RESIDENT BSP_ScrapBucket_Raw;
+
+DROP TABLE BSP_ScrapBucket_Raw;
+DROP TABLE JobFact_Order_Scrap;
 
 
 ///$tab Step 5
@@ -1997,6 +2076,85 @@ DROP MAPPING TABLE BSP_L3_DwnRsn_Map;
 
 
 // ============================================================
+// SECTION 40B: CURRENT-PERIOD ORDER-LEVEL SCRAP AGGREGATION
+// Grain  : Plant + WC Object ID (via Plant_Reason_Map)
+// Window : v2WeekStart to current week (1-week actuals)
+// Filter : SetupCount = 1 (single-setup orders only)
+// Bucket BSP looked up from BSP_ScrapBucket_Map (Tab 4)
+// Result joined onto CurrentPeriod for Section 42 (Tab 6)
+// ============================================================
+
+CurPeriod_OrderScrap_Agg:
+NoConcatenate
+LOAD
+    "WC Object ID",
+    "Order",
+    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in OEE UOM" + "Scrap in OEE UOM", 0))  as TotalSheets,
+    Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM", 0))                        as ScrapSheets,
+    Sum(If(fSched = 1, "Setup Count", 0))                                                      as SetupCount
+FROM [$(vFactQVD)]
+(qvd)
+WHERE Date >= $(v2WeekStart) AND Date < $(vCurrentWeekStart)
+GROUP BY "WC Object ID", "Order";
+
+CurPeriod_OrderScrap:
+NoConcatenate
+LOAD
+    ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')                           as Plant,
+    "WC Object ID",
+    "Order",
+    TotalSheets,
+    ScrapSheets,
+    $(vScrapBucket(TotalSheets))                                                      as ScrapBucket,
+    ApplyMap('BSP_ScrapBucket_Map',
+        ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
+        & '|' & [WC Object ID] & '|' & $(vScrapBucket(TotalSheets)), Null())         as BSP_ScrapPct_Order,
+    If(Not IsNull(ApplyMap('BSP_ScrapBucket_Map',
+        ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
+        & '|' & [WC Object ID] & '|' & $(vScrapBucket(TotalSheets)), Null())),
+        ApplyMap('BSP_ScrapBucket_Map',
+            ApplyMap('Plant_Reason_Map', "WC Object ID", 'Unknown')
+            & '|' & [WC Object ID] & '|' & $(vScrapBucket(TotalSheets)), Null())
+            * TotalSheets, Null())                                                    as ExpectedScrap_Order
+RESIDENT CurPeriod_OrderScrap_Agg
+WHERE SetupCount = 1 AND TotalSheets > 0;
+
+DROP TABLE CurPeriod_OrderScrap_Agg;
+
+CurPeriod_ScrapBucket:
+NoConcatenate
+LOAD
+    Plant,
+    "WC Object ID",
+    Sum(ScrapSheets)                                                   as Cur_ActualScrapSheets,
+    Sum(ExpectedScrap_Order)                                           as Cur_ExpectedScrapSheets,
+    Sum(TotalSheets)                                                   as Cur_ScrapTotalSheets,
+    Sum(If(Not IsNull(BSP_ScrapPct_Order), TotalSheets, 0))           as Cur_ScrapCoveredSheets,
+    Avg(If(Not IsNull(BSP_ScrapPct_Order),
+        ApplyMap('BSP_ScrapBucketPool_Map',
+            Plant & '|' & [WC Object ID] & '|' & ScrapBucket, Null()), Null()))      as Cur_ScrapBucketPoolSize
+RESIDENT CurPeriod_OrderScrap
+GROUP BY Plant, "WC Object ID";
+
+DROP TABLE CurPeriod_OrderScrap;
+DROP MAPPING TABLE BSP_ScrapBucket_Map;
+DROP MAPPING TABLE BSP_ScrapBucketPool_Map;
+
+LEFT JOIN (CurrentPeriod)
+LOAD
+    Plant,
+    "WC Object ID",
+    Cur_ActualScrapSheets,
+    Cur_ExpectedScrapSheets,
+    Cur_ScrapTotalSheets,
+    Cur_ScrapCoveredSheets,
+    Cur_ScrapBucketPoolSize
+RESIDENT CurPeriod_ScrapBucket;
+
+DROP TABLE CurPeriod_ScrapBucket;
+
+
+// ============================================================
 // SECTION 41B: 4-WEEK REASON STREAK
 // Per reason (Plant + WC + ReasonKey), counts how many of the
 // last 4 weeks the reason's weekly rate exceeded its 2-week
@@ -2204,27 +2362,25 @@ LOAD
     ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                       as "Plant - WC",
     ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
     Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
-    'Scrap Rate'                                                                                as KPI_Name,
+    'Scrap Loss'                                                                                as KPI_Name,
     'Lever - OEE'                                                                               as KPI_Category,
     Cur_ScrapRate                                                                               as Cur_Actual,
-    Cur_BSP_ScrapRate                                                                           as BSP_Benchmark,
-    Num(Cur_ScrapRate,     '0.00%')                                                             as Cur_Actual_Fmt,
-    Num(Cur_BSP_ScrapRate, '0.00%')                                                             as BSP_Benchmark_Fmt,
-    (Cur_ScrapRate - Cur_BSP_ScrapRate) / Cur_BSP_ScrapRate * 100                               as Gap_Pct,
-    (Cur_ScrapRate - Cur_BSP_ScrapRate) * Cur_RunHours * Cur_BSP_Speed                         as Sheet_Gap,
-    RangeMin(If(IsNull(Streak_ScrapRate), 0, Streak_ScrapRate), 4)                              as Streak_4wk,
+    If(Cur_ScrapTotalSheets > 0, Cur_ExpectedScrapSheets / Cur_ScrapTotalSheets, Null())        as BSP_Benchmark,
+    Num(Cur_ScrapRate, '0.00%')                                                                 as Cur_Actual_Fmt,
+    Num(If(Cur_ScrapTotalSheets > 0, Cur_ExpectedScrapSheets / Cur_ScrapTotalSheets, Null()), '0.00%')  as BSP_Benchmark_Fmt,
+    If(Cur_ExpectedScrapSheets > 0,
+        (Cur_ActualScrapSheets - Cur_ExpectedScrapSheets) / Cur_ExpectedScrapSheets * 100, 0)   as Gap_Pct,
+    Cur_ActualScrapSheets - Cur_ExpectedScrapSheets                                             as Sheet_Gap,
+    0                                                                                           as Streak_4wk,
     Cur_SchedHours,
-    Cur_BSP_CoveragePct,
-    Cur_BSP_ConfScore,
-    Cur_BSP_PoolSize,
-    If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
-        If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
-            If(Cur_BSP_ConfScore >= 0.5, 'LOW',
-                'Insufficient History')))                                                        as BSP_Confidence
+    If(Cur_ScrapTotalSheets > 0, Cur_ScrapCoveredSheets / Cur_ScrapTotalSheets, 0)              as Cur_BSP_CoveragePct,
+    Null()                                                                                      as Cur_BSP_ConfScore,
+    Cur_ScrapBucketPoolSize                                                                     as Cur_BSP_PoolSize,
+    Null()                                                                                      as BSP_Confidence
 RESIDENT CurrentPeriod
-WHERE Not IsNull(Cur_BSP_ScrapRate) AND Not IsNull(Cur_ScrapRate)
-    AND Cur_ScrapRate > Cur_BSP_ScrapRate
-    AND Cur_BSP_CoveragePct > $(vMinCoverage);
+WHERE Cur_ScrapTotalSheets > 0
+    AND (Cur_ActualScrapSheets - Cur_ExpectedScrapSheets) > 0
+    AND Cur_ScrapCoveredSheets / Cur_ScrapTotalSheets > $(vMinCoverage);
 
 Concatenate (InsightRecords_Raw)
 LOAD
@@ -2332,7 +2488,7 @@ DROP TABLE CurrentPeriod;
 // Sheet_Gap per KPI (all results are sheets):
 //   OEE              : (BSP - Actual) * Cur_SchedHours * Cur_MaxSpeed
 //   Downtime %       : (Actual - BSP) * Cur_SchedHours * Cur_BSP_Speed
-//   Scrap Rate       : (Actual - BSP) * Cur_RunHours   * Cur_BSP_Speed
+//   Scrap Loss       : Sum(ActualScrap) - Sum(ExpectedScrap)  [bucket-weighted, direct sheets]
 //   Speed            : (BSP - Actual) * Cur_RunHours
 //   Avg MR Time      : (Actual - BSP) * Cur_SetupEventCount * Cur_BSP_Speed
 //   Avg Blanket Wash : (Actual - BSP) * Cur_BlanketWashEvents * Cur_BSP_Speed
@@ -2728,9 +2884,9 @@ DROP TABLE Temp_PoolLevers;
 
 
 // ---- Step F2: driver-parent map ----
-// Picks the highest-Sheet_Impact occurrence of Downtime % or Scrap Rate
-// among the top-3 OEE levers.  Used by the email summary clause.
-// Returns Null when neither parent appears in the pool.
+// Picks the highest-Sheet_Impact occurrence of Downtime % among the top-3 OEE levers.
+// Used by the email summary clause. Returns Null when Downtime % does not appear in the pool.
+// (Scrap Loss has no sub-reasons and no longer triggers driver-parent logic.)
 
 Temp_DriverParent:
 NoConcatenate
@@ -2740,7 +2896,7 @@ LOAD
     FirstSortedValue(Lever_Name,   -Lever_Sheets)  as Driver_Parent_Name,
     FirstSortedValue(Lever_Sheets, -Lever_Sheets)  as Driver_Parent_Sheets
 RESIDENT Temp_PoolLeversRanked
-WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %', 'Scrap Rate') > 0
+WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %') > 0
 GROUP BY Plant, [WC Object ID];
 
 DriverParent_Name_Map:
@@ -2874,9 +3030,9 @@ DROP MAPPING TABLE HasPoolLevers_Map;
 
 
 // ---- Step H: assemble final lever list (up to 5 per machine) ----
-// Pass 1  : unaffected levers (not Downtime % / Scrap Rate)
+// Pass 1  : unaffected levers (not Downtime %)
 //           + swap targets with zero sub-reasons (parent kept as fallback)
-// Pass 2a : first sub-reason replacing each Downtime % / Scrap Rate slot
+// Pass 2a : first sub-reason replacing each Downtime % slot
 // Pass 2b : second sub-reason when 2+ exist
 // Each pass runs for both pool-lever and fallback-lever sources.
 // Order_Key = ParentRank*10 + SubOffset so ORDER BY ASC preserves original
@@ -2891,7 +3047,7 @@ LOAD
     Lever_Streak, Lever_Parent_Outcome, Lever_Cur_Actual, Lever_BSP_Benchmark
 RESIDENT Temp_PoolLeversRanked
 WHERE Lever_Rank <= 3
-  AND (Match(Lever_Name, 'Downtime %', 'Scrap Rate') = 0
+  AND (Match(Lever_Name, 'Downtime %') = 0
        OR IsNull(ApplyMap('Sub_R1_Name_Map',
             Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())));
 
@@ -2903,7 +3059,7 @@ LOAD
     Lever_Streak, Lever_Parent_Outcome, Lever_Cur_Actual, Lever_BSP_Benchmark
 RESIDENT Temp_AllLeversRanked
 WHERE Lever_Rank <= 3
-  AND (Match(Lever_Name, 'Downtime %', 'Scrap Rate') = 0
+  AND (Match(Lever_Name, 'Downtime %') = 0
        OR IsNull(ApplyMap('Sub_R1_Name_Map',
             Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())));
 
@@ -2921,7 +3077,7 @@ LOAD
     ApplyMap('Sub_R1_CurActual_Map', Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Cur_Actual,
     ApplyMap('Sub_R1_BSP_Map',       Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_BSP_Benchmark
 RESIDENT Temp_PoolLeversRanked
-WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %', 'Scrap Rate') > 0
+WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %') > 0
   AND Not IsNull(ApplyMap('Sub_R1_Name_Map',
        Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null()));
 
@@ -2939,7 +3095,7 @@ LOAD
     ApplyMap('Sub_R1_CurActual_Map', Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Cur_Actual,
     ApplyMap('Sub_R1_BSP_Map',       Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_BSP_Benchmark
 RESIDENT Temp_AllLeversRanked
-WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %', 'Scrap Rate') > 0
+WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %') > 0
   AND Not IsNull(ApplyMap('Sub_R1_Name_Map',
        Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null()));
 
@@ -2957,7 +3113,7 @@ LOAD
     ApplyMap('Sub_R2_CurActual_Map', Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Cur_Actual,
     ApplyMap('Sub_R2_BSP_Map',       Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_BSP_Benchmark
 RESIDENT Temp_PoolLeversRanked
-WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %', 'Scrap Rate') > 0
+WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %') > 0
   AND Not IsNull(ApplyMap('Sub_R2_Name_Map',
        Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null()));
 
@@ -2975,7 +3131,7 @@ LOAD
     ApplyMap('Sub_R2_CurActual_Map', Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_Cur_Actual,
     ApplyMap('Sub_R2_BSP_Map',       Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null())  as Lever_BSP_Benchmark
 RESIDENT Temp_AllLeversRanked
-WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %', 'Scrap Rate') > 0
+WHERE Lever_Rank <= 3 AND Match(Lever_Name, 'Downtime %') > 0
   AND Not IsNull(ApplyMap('Sub_R2_Name_Map',
        Plant & '|' & [WC Object ID] & '|' & Lever_Name, Null()));
 

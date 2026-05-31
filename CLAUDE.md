@@ -109,7 +109,7 @@ Per-reason `Streak_4wk` (range 0–4) is the count of weeks in the last 4 full w
   **Sheet_Gap formulas (in sheets lost vs BSP):**
   - **OEE**: `(BSP_OEE − Cur_OEE) × Cur_SchedHours × Cur_MaxSpeed` — uses `Cur_MaxSpeed` (OEM Speed or Max Gluer CPH), not BSP Speed, because OEE denominator is SchedHours × MaxSpeed
   - **Downtime %**: `(Cur_DTPct − BSP_DTPct) × Cur_SchedHours × Cur_BSP_Speed` — numerator is `(DownHours + SetupDownHours) / SchedHours` at all levels (current + L1/L2/L3 BSP). Setup Down counts as machine downtime per plant definition `(Time − Down) + (Time − Setup Down)`. Reason-level DT (`L*_BSP_ReasonDownPct`) is unchanged — reason codes attribute only `DownHours`; Setup Down is its own bucket.
-  - **Scrap Rate**: `(Cur_ScrapRate − BSP_ScrapRate) × Cur_RunHours × Cur_BSP_Speed` — RunHours (not SchedHours) because scrap only accumulates during production
+  - **Scrap Loss**: `Sum(Cur_ActualScrapSheets) − Sum(Cur_ExpectedScrapSheets)` — direct excess sheets; expected scrap is the sum of `BSP_ScrapPct × TotalSheets` per order across all single-setup orders in the current week, where BSP_ScrapPct comes from the order's size bucket. No speed multiplier.
   - **Speed**: `(BSP_Speed − Cur_Speed) × Cur_RunHours` — sheets directly, speed deficit × run hours
   - **Avg MR Time**: `(Cur_SetupHrsPerEvent − BSP_SetupHrsPerEvent) × Cur_SetupEventCount × Cur_BSP_Speed` — excess duration × actual event count × speed
   - **Avg Blanket Wash Time**: `(Cur_BlanketWashTime − BSP_BlanketWashTime) × Cur_BlanketWashEvents × Cur_BSP_Speed`
@@ -196,11 +196,13 @@ Applied in:
 
 ## KPI Direction Reference
 
-| Higher-is-better (P75 BSP, fires when Actual < BSP) | Lower-is-better (P25 BSP, fires when Actual > BSP) |
+| Higher-is-better (P75 BSP, fires when Actual < BSP) | Lower-is-better (fires when Actual > BSP) |
 |---|---|
-| OEE, Speed | Downtime %, Scrap Rate, Avg MR Time, Avg Blanket Wash Time, Avg Feeder Trip Time |
+| OEE, Speed | Downtime %, Scrap Loss, Avg MR Time, Avg Blanket Wash Time, Avg Feeder Trip Time |
 
 **Removed KPIs (no longer computed):** ARQ, Net Throughput Rate, Setup Frequency, Availability, Performance %, Quality Rate, Setup Time %
+
+**Scrap Loss (replaces Scrap Rate):** `KPI_Name = 'Scrap Loss'`, `KPI_Category = 'Lever - OEE'`. Uses a bucket-aware BSP instead of a single per-machine BSP. Orders are segmented into 10 size buckets by `TotalSheets` (Yield + Scrap in OEE UOM) using the parameterised variable `vScrapBucket` (defined in Tab 1). BSP is computed per Plant + Machine + Bucket over a 6-month rolling window (`v6MonthStart`) at P25 scrap rate, `SetupCount = 1` orders only. Mapping table `BSP_ScrapBucket_Map` is keyed `Plant|WCObjectID|Bucket`. Current-period aggregation re-reads the fact QVD for 1-week window at order grain (Section 40B), computes `ExpectedScrap = BSP_Pct × TotalSheets` per order, then rolls up to machine level. `Sheet_Gap = Sum(ActualScrap) − Sum(ExpectedScrap)` (direct sheets, no speed multiplier). Coverage = `CoveredSheets / TotalSheets` where CoveredSheets counts only orders where the bucket BSP resolved.
 
 **Email display formatting (notifier):** Avg MR Time, Avg Blanket Wash Time, Avg Feeder Trip Time are stored in Qlik as fractional hours but displayed in the email digest as integer minutes (e.g. 0.45 hr → `27 Mins`). Speed is displayed as an integer (no decimal). Formatting applied in `notifier/src/grouper.py:_format_kpi_value`.
 

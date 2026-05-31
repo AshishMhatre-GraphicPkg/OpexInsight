@@ -34,12 +34,12 @@ _LEVER_FIELDS = ("Name", "Reasons", "Sheets", "Gap_Pct", "Streak", "Parent_Outco
 
 _PERCENT_LEVERS = {
     "OEE",
-    "Downtime %", "Scrap Rate",
+    "Downtime %", "Scrap Loss",
     "Downtime Reason",
 }
 
 _LOWER_IS_BETTER_LEVERS = {
-    "Downtime %", "Scrap Rate", "Avg MR Time",
+    "Downtime %", "Scrap Loss", "Avg MR Time",
     "Downtime Reason",
     "Avg Blanket Wash Time", "Avg Feeder Trip Time",
 }
