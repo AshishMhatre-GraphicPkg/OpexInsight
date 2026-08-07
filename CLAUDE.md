@@ -19,14 +19,23 @@ Two components share this repo:
 | Component | Path | Language | What it does |
 |---|---|---|---|
 | **Qlik load script** | `InsightOpexv1.qvs` | Qlik script | Computes BSP benchmarks, scores gaps, stores `InsightRecords.qvd` and `MachineWeekSummary.csv` to SharePoint |
-| **Email notifier** | `notifier/` | Python 3.11+ | Reads `MachineWeekSummary.csv` and `Findings.csv` from SharePoint, renders per-manager digest emails, sends via Microsoft Graph API |
+| **Email notifier** | `notifier/` | Python 3.11+ | Reads `MachineWeekSummary.csv` and `Findings.csv` from SharePoint, renders per-plant-manager digest emails and per-regional-manager synopsis emails, sends via Microsoft Graph API |
 
 The interface between them is two CSV files on SharePoint (`OPEXinsights/`):
 
-- **`MachineWeekSummary.csv`** — written by Qlik Section 49 after each Monday reload. One row per machine per week, with top-2 Outcomes and top-3 Levers pre-pivoted. Join key: `Plant` (plant number) + `WC Object ID`.
+- **`MachineWeekSummary.csv`** — written by Qlik Section 49 after each Monday reload. One row per machine per week, with Outcome + up to 5 Levers pre-pivoted, plus `Manager_Email` / `CC_List` / `Regional_Manager_Email` / `Regional_Manager_Name` / `Routing_Match_Level` stamped on for the notifier's routing. Join key: `Plant` (plant number) + `WC Object ID`.
 - **`Findings.csv`** — written by an external maintenance system (daily). One row per open/missing-WO finding. Join key: `Plant` + `G.WCobjectID`.
 
-See `notifier/CLAUDE.md` for the full notifier architecture.
+A third SharePoint file, **`PlantManagers.xlsx`**, is read only by Qlik
+(Section 7B) — one row per **Plant + Department** carrying
+`Manager_Email` / `CC_List` / `Regional_Manager` / `Regional_Manager_Email`.
+Qlik resolves each machine's routing at Plant+Department grain, falling
+back to a Plant-only match (and stamping `Routing_Match_Level` accordingly)
+when a department isn't yet in the workbook. See Section 7B (Step 2) and
+Section 49 (Step 6) in the script below, and `notifier/CLAUDE.md` for how
+the notifier consumes this.
+
+See `notifier/CLAUDE.md` for the full notifier architecture (plant-manager digests + regional-manager synopses + brand theme).
 
 ---
 
@@ -46,6 +55,10 @@ Loads `PlantInformation`, `WcAttributes`, `Department_Lookup` (Excel), `CartonEx
 **Critical:** `Plant` is removed from `WcAttributes` in-memory to prevent a circular reference. Plant reaches `InsightRecords` only through fact-table enrichment via `ApplyMap('Plant_Map', ...)`.
 
 **`OrderOp_NumberUp_Map` lifecycle:** Defined in Step 2, used in Step 3 (`JobFact_Raw` LOAD) and again in Step 5 (Sections 40–41 reason die-level raws which re-read from QVD). Not dropped until end of Section 41.
+
+**`ApprovedRsnText_Map` / `RsnBucket_Map` lifecycle:** Also defined in Step 2 (Section 5), alongside `TimeReason_Name_Map`. Classifies each `"Time Plant Reason Key"` as `'BW'` (Blanket Wash) / `'FT'` (Feeder Trip) / unclassified — see [Downtime Reason Key Exclusions](#downtime-reason-key-exclusions). Used through Step 3's fact-table passes and Step 5's reason pipelines (Sections 12, 40, 41B); dropped in Section 47.
+
+**Section 7B — Plant / Regional Manager Email Mapping:** Reads `PlantManagers.xlsx` (grain: one row per Plant + Department) into 8 mapping tables — 4 keyed on `Plant|Department` (`PlantManager_Map`, `PlantManager_CC_Map`, `RegionalManager_Map`, `RegionalManagerName_Map`) and 4 plant-only fallback maps with the `_Fallback_Map` suffix (first-row-wins per plant, used when a machine's department isn't yet in the workbook). Consumed in Section 49 to stamp `Manager_Email`, `CC_List`, `Regional_Manager_Email`, `Regional_Manager_Name`, and `Routing_Match_Level` (`'Department'` / `'Plant'` / `'None'`) onto `MachineWeekSummary`. Kept alive for the whole script (not dropped) like other small mapping tables.
 
 ### Step 3 — Fact Table Passes (Sections 8–15)
 
@@ -123,6 +136,8 @@ Per-reason `Streak_4wk` (range 0–4) is the count of weeks in the last 4 full w
 - **Section 48:** Incremental store — unchanged mechanics.
 - **Section 49:** `MachineWeekSummary.csv` export. `Total_Sheet_Impact` = the OEE row's `Sheet_Impact` only (`WHERE KPI_Name = 'OEE'`). Levers ladder into OEE so summing all rows double-counts; OEE Sheet_Impact captures total loss vs BSP. Machines with no OEE insight (OEE >= BSP) are excluded. The QVD's historical rows pre-dating this refactor will have legacy fields (`tPltRsnKey`, `Composite_Score`, `Impact_Score`, `Streak_13wk`) as NULL on new writes and new fields (`Reasons`, `OEE_Impact`, `Streak_4wk` for reasons) as NULL on old rows — Qlik concat tolerates this. A one-time full reload cleans up the QVD if desired.
 
+  **Manager routing columns:** `Manager_Email`, `CC_List`, `Regional_Manager_Email`, `Regional_Manager_Name`, `Routing_Match_Level` are resolved via the Section 7B maps and added to every row (see Step 2 above). Each is looked up first at `Plant|Upper(Trim(Department))` grain, falling back to a plant-only map when that misses; `Routing_Match_Level` records which map actually resolved (`'Department'` / `'Plant'` / `'None'`) so the notifier can alert on rows that fell back. The lookup key fields (`%RouteKey`, `%RoutePlantKey`) are computed inline in the LOAD and dropped from the stored table immediately after (`DROP FIELD ... FROM MachineWeekSummary`).
+
   **Sub-reason swap rule (Section 49):** Before writing `Lever_N_*` columns, each occurrence of `Downtime %` in the top-3 `'Lever - OEE'` pool is replaced by its top-2 sub-reasons (by `Sheet_Impact`). Sub-reason source: `KPI_Category = 'Lever - Downtime %'` (Downtime Reason only — Scrap Reason removed). Each swap expands one parent slot into up to 2 sub-reason rows; total lever count grows from 3 to up to 4. Unaffected parent levers keep their original rank position; sub-reasons are inserted at the parent's position ordered by Sheet_Impact DESC. **Fallback:** if a machine has Downtime % in top-3 but zero qualifying sub-reason rows, the parent stays in place.
 
   **Driver parent clause:** Two columns are added to the export (retained for data completeness even though the email no longer renders the "driven primarily by" sentence):
@@ -181,10 +196,11 @@ Applied inline on every aggregation — never pre-filtered:
 
 ## Downtime Reason Key Exclusions
 
-Three downtime-reason pipelines share a common `Not WildMatch` filter on `"Time Plant Reason Key"`:
+Three downtime-reason pipelines share a common exclusion filter on `"Time Plant Reason Key"`:
 
 ```qlik
-AND Not WildMatch("Time Plant Reason Key", '*MR0*', '*PQBW*', '*PLG5*', '*PLDF*', '*PLF*')
+AND Not WildMatch("Time Plant Reason Key", '*MR0*')
+AND Len(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '')) = 0
 ```
 
 Applied in:
@@ -192,7 +208,9 @@ Applied in:
 - **Section 40** (`CurPeriod_DwnReason_DieLvl_Raw`) — 1-week current-period actuals
 - **Section 41B** (`WeeklyDwnReason_Raw`) — 4-week streak source
 
-**Why:** `*MR0*` = MRO setup reasons (excluded since always). `*PQBW*` = BlanketWash events; `*PLG5*`, `*PLDF*`, `*PLF*` = FeederTrip events. These are already captured by the Avg Blanket Wash Time and Avg Feeder Trip Time KPIs — including them in Downtime Reason insights would double-count their sheet impact. The exclusion patterns must match exactly what the BlanketWash/FeederTrip `Sum(If(WildMatch(...)))` expressions use in the fact-table passes.
+**Why:** `*MR0*` = MRO setup reasons (excluded since always). `RsnBucket_Map` = BlanketWash + FeederTrip events (bucket `'BW'` / `'FT'`). These are already captured by the Avg Blanket Wash Time and Avg Feeder Trip Time KPIs — including them in Downtime Reason insights would double-count their sheet impact. Because both the inclusion (Section 5) and exclusion (Sections 12/40/41B) read the same map, they can never drift apart.
+
+**`ApprovedRsnText_Map` / `RsnBucket_Map` (Section 5):** Blanket Wash and Feeder Trip event classification is **not** done via substring `WildMatch` on the reason code — the old `'*PQBW*'` / `'*PLG5*'`, `'*PLDF*'`, `'*PLF*'` patterns false-matched `PLF0` ("Baldwin fountain solution") into Feeder Trip, and missed several genuine wash codes (`PQB0`, `PQBO`, `PQB1`, `PQB2`, `PQBK`, `PQBP`, `PQ58`). Instead, `ApprovedRsnText_Map` is an inline allow-list of exact `"Time Reason"` description strings (not codes — the same code means different things at different plants, e.g. `PQ58` = "Blanket - Wash General" at one plant, "Offset/Picking" at another), and `RsnBucket_Map` joins it against `TimeReasonCodes.qvd` to produce a `"Time Plant Reason Key" → 'BW' | 'FT' | ''` mapping. Scope is deliberately narrow: Feeder Trip = press feeder proper only (no gluer/cutting/sheeter feeder codes, no infeed/web-guide, no splicer/unwind-only codes); Blanket Wash = wash events only (no blanket change/problem codes, no plate/cylinder wash, no generic wash-up). Both maps are dropped alongside `TimeReason_Name_Map` in Section 47. To add a newly-identified code, add its exact `"Time Reason"` string to `ApprovedRsnText_Map` — no other change is needed since all 6 consuming sites read `RsnBucket_Map`.
 
 ## KPI Direction Reference
 

@@ -13,10 +13,17 @@ def df():
     return pd.read_csv(FIXTURE)
 
 
-def test_two_managers(df):
+def test_four_managers(df):
+    # Fixture also carries Dallas (manager.c, 2 machines) and Denver (manager.d, 1 machine)
+    # to exercise regional roll-ups in test_regional.py.
     digests = group_by_manager(df)
     emails = {d.manager_email for d in digests}
-    assert emails == {"manager.a@company.com", "manager.b@company.com"}
+    assert emails == {
+        "manager.a@company.com",
+        "manager.b@company.com",
+        "manager.c@company.com",
+        "manager.d@company.com",
+    }
 
 
 def test_manager_a_has_two_machines(df):

@@ -2,87 +2,108 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-  body { font-family: Calibri, Arial, sans-serif; font-size: 14px; color: #1a1a1a; }
-  h2 { color: #003366; border-bottom: 2px solid #003366; padding-bottom: 4px; }
-  h3 { color: #005099; margin-top: 24px; margin-bottom: 4px; }
+  /* Progressive enhancement only — nothing here is load-bearing.
+     Outlook desktop (Word engine) ignores most of this block and,
+     in Outlook.com, drops <style> entirely. Every element below also
+     carries an inline style= attribute with the same values so the
+     email still reads correctly with this block stripped. */
+  body { font-family: 'Segoe UI', Calibri, Arial, sans-serif; font-size: 14px; color: #3D3935; margin: 0; padding: 0; background-color: #F4F8F3; }
+  .content-wrap { max-width: 640px; margin: 0 auto; background-color: #FFFFFF; }
+  h2 { color: #FFFFFF; margin: 0; font-size: 20px; }
+  h3 { color: #006548; margin-top: 24px; margin-bottom: 4px; font-size: 16px; }
   .impact { font-size: 1.05em; }
   .levers { margin-top: 8px; padding-left: 18px; }
   .levers li { margin-bottom: 4px; }
-  .streak { color: #c0392b; font-weight: bold; }
-  .findings { margin-top: 14px; background: #f9f9f9; border-left: 3px solid #c0392b; padding: 8px 12px; border-radius: 2px; }
-  .findings h4 { margin: 0 0 6px; color: #7b0000; font-size: 0.95em; }
+  .streak { color: #8A5A00; font-weight: bold; }
+  .findings { margin-top: 14px; background: #FFF8E8; border-left: 3px solid #E0A800; padding: 8px 12px; }
+  .findings h4 { margin: 0 0 6px; color: #8A5A00; font-size: 0.95em; }
   .findings p { margin: 4px 0; }
   .findings-sections { margin: 6px 0 4px; padding-left: 16px; }
   .findings-sections li { margin-bottom: 3px; font-size: 0.93em; }
-  .findings-sections li.corroborated { font-weight: bold; color: #7b0000; }
-  .findings-note { font-size: 0.85em; color: #666; margin-top: 6px; }
+  .findings-sections li.corroborated { font-weight: bold; color: #8A5A00; }
+  .findings-note { font-size: 0.85em; color: #6B6560; margin-top: 6px; }
   .pm-table { margin-top: 14px; border-collapse: collapse; width: 100%; max-width: 480px; font-size: 0.93em; }
-  .pm-table th { background: #fff3cd; color: #664d00; text-align: left; padding: 5px 8px; }
-  .pm-table td { padding: 4px 8px; border-bottom: 1px solid #eee; }
+  .pm-table th { background: #E7F0E9; color: #006548; text-align: left; padding: 6px 10px; }
+  .pm-table td { padding: 5px 10px; border-bottom: 1px solid #DDE3DE; }
   .pm-count { text-align: right; }
-  .pm-total-row td { border-top: 2px solid #ccc; }
+  .pm-total-row td { border-top: 2px solid #DDE3DE; font-weight: bold; }
   .maint-table { margin-top: 14px; margin-bottom: 24px; border-collapse: collapse; width: 100%; max-width: 600px; font-size: 0.93em; }
-  .maint-table th { background: #fff3cd; color: #664d00; text-align: left; padding: 5px 8px; }
-  .maint-table td { padding: 4px 8px; border-bottom: 1px solid #eee; }
+  .maint-table th { background: #E7F0E9; color: #006548; text-align: left; padding: 6px 10px; }
+  .maint-table td { padding: 5px 10px; border-bottom: 1px solid #DDE3DE; }
   .maint-count { text-align: right; }
-  .maint-total-row td { border-top: 2px solid #ccc; font-weight: bold; }
-  .footer { margin-top: 32px; font-size: 12px; color: #888; border-top: 1px solid #ddd; padding-top: 8px; }
-  .overview-tiles { border-collapse: separate; border-spacing: 12px 0; margin: 12px 0 16px; }
-  .tile { background: #f0f4fa; border-radius: 6px; padding: 10px 20px; text-align: center; min-width: 120px; }
-  .tile-value { font-size: 1.4em; font-weight: bold; color: #003366; }
-  .tile-label { font-size: 0.8em; color: #555; margin-top: 2px; }
+  .maint-total-row td { border-top: 2px solid #DDE3DE; font-weight: bold; }
+  .footer { margin-top: 32px; font-size: 12px; color: #6B6560; border-top: 1px solid #DDE3DE; padding-top: 8px; }
+  .overview-tiles { border-collapse: separate; border-spacing: 6px 0; margin: 16px 0; width: 100%; }
+  .tile { background: #F4F8F3; border-top: 3px solid #76BC21; padding: 12px 16px; text-align: center; }
+  .tile-value { font-size: 1.4em; font-weight: bold; color: #006548; }
+  .tile-label { font-size: 0.75em; color: #6B6560; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
   .movers-table { border-collapse: collapse; width: 100%; max-width: 640px; font-size: 0.93em; margin-bottom: 12px; }
-  .movers-table th { background: #e8eef6; color: #003366; text-align: left; padding: 5px 8px; }
-  .movers-table td { padding: 4px 8px; border-bottom: 1px solid #eee; }
+  .movers-table th { background: #E7F0E9; color: #006548; text-align: left; padding: 6px 10px; }
+  .movers-table td { padding: 5px 10px; border-bottom: 1px solid #DDE3DE; }
   .movers-count { text-align: center; }
-  .maint-line { font-size: 0.9em; color: #664d00; background: #fffbf0; border-left: 3px solid #f0ad00; padding: 6px 10px; margin-top: 8px; }
+  .maint-line { font-size: 0.9em; color: #8A5A00; background: #FFF8E8; border-left: 3px solid #E0A800; padding: 8px 12px; margin-top: 8px; }
+  .machine-card { margin-top: 22px; background-color: #F4F8F3; border-left: 4px solid #76BC21; padding: 4px 16px 16px; }
+  .dept-pill { display: inline-block; font-size: 0.72em; color: #006548; background: #E7F0E9; padding: 2px 8px; border-radius: 10px; margin-left: 8px; vertical-align: middle; }
+  @media (max-width: 620px) {
+    .overview-tiles, .overview-tiles tbody, .overview-tiles tr, .overview-tiles td { display: block; width: 100% !important; }
+    .tile { margin-bottom: 8px; }
+  }
 </style>
 </head>
-<body>
-
-<h2>{{ subject }}</h2>
+<body style="font-family:'Segoe UI', Calibri, Arial, sans-serif; font-size:14px; color:#3D3935; margin:0; padding:0; background-color:#F4F8F3;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F4F8F3;">
+<tr><td align="center">
+<table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" class="content-wrap" style="max-width:640px; width:100%; background-color:#FFFFFF;">
+<tr>
+  <td style="background-color:#004D36; padding:20px 24px;">
+    <h2 style="color:#FFFFFF; margin:0; font-size:20px; line-height:1.3; font-family:'Segoe UI', Calibri, Arial, sans-serif;">{{ subject }}</h2>
+  </td>
+</tr>
+<tr>
+  <td style="padding:20px 24px 24px;">
 
 {% if digest.overview %}
 {% set ov = digest.overview %}
-<table class="overview-tiles">
+<table class="overview-tiles" style="border-collapse:separate; border-spacing:6px 0; margin:16px 0; width:100%;">
   <tr>
-    <td class="tile">
-      <div class="tile-value">{{ ov.total_sheets | comma_int }}</div>
-      <div class="tile-label">Sheets lost vs BSP</div>
+    <td class="tile" style="background-color:#F4F8F3; border-top:3px solid #76BC21; padding:12px 16px; text-align:center;">
+      <div class="tile-value" style="font-size:1.4em; font-weight:bold; color:#006548; font-variant-numeric:tabular-nums;">{{ ov.total_sheets | comma_int }}</div>
+      <div class="tile-label" style="font-size:0.75em; color:#6B6560; margin-top:3px; text-transform:uppercase; letter-spacing:0.04em;">Sheets lost vs BSP</div>
     </td>
-    <td class="tile">
-      <div class="tile-value">{{ ov.machines_impacted }}</div>
-      <div class="tile-label">Machines impacted</div>
+    <td class="tile" style="background-color:#F4F8F3; border-top:3px solid #76BC21; padding:12px 16px; text-align:center;">
+      <div class="tile-value" style="font-size:1.4em; font-weight:bold; color:#006548; font-variant-numeric:tabular-nums;">{{ ov.machines_impacted }}</div>
+      <div class="tile-label" style="font-size:0.75em; color:#6B6560; margin-top:3px; text-transform:uppercase; letter-spacing:0.04em;">Machines impacted</div>
     </td>
     {% if ov.top_driver_name %}
-    <td class="tile">
-      <div class="tile-value">{{ ov.top_driver_name }}</div>
-      <div class="tile-label">Top driver ({{ ov.top_driver_sheets | comma_int }} sheets)</div>
+    <td class="tile" style="background-color:#F4F8F3; border-top:3px solid #76BC21; padding:12px 16px; text-align:center;">
+      <div class="tile-value" style="font-size:1.4em; font-weight:bold; color:#006548;">{{ ov.top_driver_name }}</div>
+      <div class="tile-label" style="font-size:0.75em; color:#6B6560; margin-top:3px; text-transform:uppercase; letter-spacing:0.04em;">Top driver ({{ ov.top_driver_sheets | comma_int }} sheets)</div>
     </td>
     {% endif %}
   </tr>
 </table>
 
 {% if ov.top_movers %}
-<table class="movers-table">
+<table class="movers-table" style="border-collapse:collapse; width:100%; max-width:640px; font-size:0.93em; margin-bottom:12px;">
   <thead>
     <tr>
-      <th>Machine</th>
-      <th class="movers-count">Cur OEE</th>
-      <th class="movers-count">BSP OEE</th>
-      <th class="movers-count">Sheets Lost vs BSP OEE ▼</th>
-      <th>Top Lever</th>
+      <th style="background:#E7F0E9; color:#006548; text-align:left; padding:6px 10px;">Machine</th>
+      <th class="movers-count" style="background:#E7F0E9; color:#006548; text-align:center; padding:6px 10px;">Cur OEE</th>
+      <th class="movers-count" style="background:#E7F0E9; color:#006548; text-align:center; padding:6px 10px;">BSP OEE</th>
+      <th class="movers-count" style="background:#E7F0E9; color:#006548; text-align:center; padding:6px 10px;">Sheets Lost vs BSP OEE ▼</th>
+      <th style="background:#E7F0E9; color:#006548; text-align:left; padding:6px 10px;">Top Lever</th>
     </tr>
   </thead>
   <tbody>
     {% for row in ov.top_movers %}
-    <tr>
-      <td>{{ row.plant_wc }}</td>
-      <td class="movers-count">{{ row.cur_oee | percent if row.cur_oee is not none else '&mdash;' }}</td>
-      <td class="movers-count">{{ row.bsp_oee | percent if row.bsp_oee is not none else '&mdash;' }}</td>
-      <td class="movers-count">{{ row.total_sheet_impact | comma_int }}</td>
-      <td>{{ row.top_lever if row.top_lever else '&mdash;' }}</td>
+    <tr {% if loop.index is even %}style="background-color:#F4F8F3;"{% endif %}>
+      <td style="padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ row.plant_wc }}</td>
+      <td class="movers-count" style="text-align:center; padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ row.cur_oee | percent if row.cur_oee is not none else '&mdash;' }}</td>
+      <td class="movers-count" style="text-align:center; padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ row.bsp_oee | percent if row.bsp_oee is not none else '&mdash;' }}</td>
+      <td class="movers-count" style="text-align:center; padding:5px 10px; border-bottom:1px solid #DDE3DE; font-variant-numeric:tabular-nums;">{{ row.total_sheet_impact | comma_int }}</td>
+      <td style="padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ row.top_lever if row.top_lever else '&mdash;' }}</td>
     </tr>
     {% endfor %}
   </tbody>
@@ -90,7 +111,7 @@
 {% endif %}
 
 {% if ov.has_maintenance %}
-<p class="maint-line">
+<p class="maint-line" style="font-size:0.9em; color:#8A5A00; background:#FFF8E8; border-left:3px solid #E0A800; padding:8px 12px; margin-top:8px;">
   Maintenance: <strong>{{ ov.maint_open }}</strong> open {{ ov.maint_open | pluralize('finding') }}
   {%- if ov.maint_priority10 %} (<strong>{{ ov.maint_priority10 }}</strong> priority-10){%- endif %},
   <strong>{{ ov.maint_overdue_pm }}</strong> {{ ov.maint_overdue_pm | pluralize('PM') }} overdue &mdash; see Maintenance Report below.
@@ -102,54 +123,55 @@
 {% set pm_machines = digest.machines | selectattr('pm_summary') | list %}
 {% set all_maint_machines = (maint_machines + pm_machines) | unique(attribute='plant_wc') | list %}
 {% if all_maint_machines %}
-<h3 style="color:#664d00; border-bottom: 2px solid #fff3cd;">Maintenance Report</h3>
-<table class="maint-table">
+<h3 style="color:#006548; margin-top:24px; margin-bottom:4px; font-size:16px; border-bottom:2px solid #E7F0E9; padding-bottom:4px;">Maintenance Report</h3>
+<table class="maint-table" style="border-collapse:collapse; width:100%; max-width:600px; font-size:0.93em; margin-top:14px; margin-bottom:24px;">
   <thead>
     <tr>
-      <th>Machine</th>
-      <th class="maint-count">GC Open</th>
-      <th class="maint-count">GC Missing WO</th>
-      <th class="maint-count">Overdue PM Procedures</th>
+      <th style="background:#E7F0E9; color:#006548; text-align:left; padding:6px 10px;">Machine</th>
+      <th class="maint-count" style="background:#E7F0E9; color:#006548; text-align:center; padding:6px 10px;">GC Open</th>
+      <th class="maint-count" style="background:#E7F0E9; color:#006548; text-align:center; padding:6px 10px;">GC Missing WO</th>
+      <th class="maint-count" style="background:#E7F0E9; color:#006548; text-align:center; padding:6px 10px;">Overdue PM Procedures</th>
     </tr>
   </thead>
   <tbody>
     {% for m in all_maint_machines %}
-    <tr>
-      <td>{{ m.plant_wc }}</td>
-      <td class="maint-count">{{ m.findings.total_open if m.findings else '' }}</td>
-      <td class="maint-count">{{ m.findings.total_missing_wo if m.findings else '' }}</td>
-      <td class="maint-count">{{ m.pm_summary.total_overdue if m.pm_summary else '' }}</td>
+    <tr {% if loop.index is even %}style="background-color:#F4F8F3;"{% endif %}>
+      <td style="padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ m.plant_wc }}</td>
+      <td class="maint-count" style="text-align:center; padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ m.findings.total_open if m.findings else '' }}</td>
+      <td class="maint-count" style="text-align:center; padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ m.findings.total_missing_wo if m.findings else '' }}</td>
+      <td class="maint-count" style="text-align:center; padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ m.pm_summary.total_overdue if m.pm_summary else '' }}</td>
     </tr>
     {% endfor %}
-    <tr class="maint-total-row">
-      <td>Total</td>
-      <td class="maint-count">{{ all_maint_machines | selectattr('findings') | map(attribute='findings.total_open') | sum }}</td>
-      <td class="maint-count">{{ all_maint_machines | selectattr('findings') | map(attribute='findings.total_missing_wo') | sum }}</td>
-      <td class="maint-count">{{ all_maint_machines | selectattr('pm_summary') | map(attribute='pm_summary.total_overdue') | sum }}</td>
+    <tr class="maint-total-row" style="border-top:2px solid #DDE3DE; font-weight:bold;">
+      <td style="padding:5px 10px;">Total</td>
+      <td class="maint-count" style="text-align:center; padding:5px 10px;">{{ all_maint_machines | selectattr('findings') | map(attribute='findings.total_open') | sum }}</td>
+      <td class="maint-count" style="text-align:center; padding:5px 10px;">{{ all_maint_machines | selectattr('findings') | map(attribute='findings.total_missing_wo') | sum }}</td>
+      <td class="maint-count" style="text-align:center; padding:5px 10px;">{{ all_maint_machines | selectattr('pm_summary') | map(attribute='pm_summary.total_overdue') | sum }}</td>
     </tr>
   </tbody>
 </table>
 {% endif %}
 
 {% for m in digest.machines %}
-<h3>{{ m.plant_wc }} — {{ m.department }}</h3>
-<p class="impact">
+<div class="machine-card" style="margin-top:22px; background-color:#F4F8F3; border-left:4px solid #76BC21; padding:4px 16px 16px;">
+<h3 style="color:#006548; margin-top:18px; margin-bottom:4px; font-size:16px;">{{ m.plant_wc }}<span class="dept-pill" style="display:inline-block; font-size:0.72em; color:#006548; background:#E7F0E9; padding:2px 8px; border-radius:10px; margin-left:8px; vertical-align:middle;">{{ m.department }}</span></h3>
+<p class="impact" style="font-size:1.05em;">
   <strong>{{ m.plant_wc }}</strong> lost
   <strong>{{ m.total_sheet_impact | comma_int }} sheets</strong> of OEE Impact this week.
 </p>
 
 {% if m.levers %}
 <p>To close those gaps, focus on these top levers:</p>
-<ul class="levers">
+<ul class="levers" style="margin-top:8px; padding-left:18px;">
 {% for l in m.levers %}
-  <li>
+  <li style="margin-bottom:4px;">
     <strong>{{ l.name }}{% if l.reasons %} — {{ l.reasons }}{% endif %}</strong>
     ({{ l.parent_outcome }},
      {{ l.sheets | comma_int }} sheets lost,
      {%- if l.cur_actual %} actual {{ l.cur_actual }} vs BSP {{ l.bsp_benchmark }},{% endif %}
      gap {{ "%.1f" | format(l.gap_pct) }}%
      {%- if l.streak > 0 %},
-     <span class="streak">{{ l.streak }}/4 weeks {{ l.streak_direction }}</span>{% endif %})
+     <span class="streak" style="color:#8A5A00; font-weight:bold;">{{ l.streak }}/4 weeks {{ l.streak_direction }}</span>{% endif %})
   </li>
 {% endfor %}
 </ul>
@@ -159,19 +181,19 @@
 {% endif %}
 
 {% if m.findings %}
-<div class="findings">
-  <h4>Graphic Care Findings</h4>
-  <p>
+<div class="findings" style="margin-top:14px; background:#FFF8E8; border-left:3px solid #E0A800; padding:8px 12px;">
+  <h4 style="margin:0 0 6px; color:#8A5A00; font-size:0.95em;">Graphic Care Findings</h4>
+  <p style="margin:4px 0;">
     Open: <strong>{{ m.findings.total_open }}</strong> &middot;
     Missing WO: <strong>{{ m.findings.total_missing_wo }}</strong> &middot;
     Overdue {{ m.findings.total_overdue | pluralize('WO') }}: <strong>{{ m.findings.total_overdue }}</strong>
     {%- if m.findings.high_priority_count %}
-      &middot; <span style="color:#7b0000;">&#9888; Priority-10: <strong>{{ m.findings.high_priority_count }}</strong></span>
+      &middot; <span style="color:#8A5A00;">&#9888; Priority-10: <strong>{{ m.findings.high_priority_count }}</strong></span>
     {%- endif %}
   </p>
-  <ul class="findings-sections">
+  <ul class="findings-sections" style="margin:6px 0 4px; padding-left:16px;">
   {% for s in m.findings.by_section %}
-    <li{% if s.is_corroborated %} class="corroborated"{% endif %}>
+    <li{% if s.is_corroborated %} class="corroborated" style="font-weight:bold; color:#8A5A00;"{% endif %}>
       {{ s.section }} &mdash; {{ s.open_count }} Open
       {%- if s.missing_wo_count %}, {{ s.missing_wo_count }} Missing WO{% endif %}
       {%- if s.overdue_count %}, {{ s.overdue_count }} Overdue{% endif %}
@@ -180,7 +202,7 @@
   {% endfor %}
   </ul>
   {% if m.findings.corroborated_sections %}
-  <p class="findings-note">
+  <p class="findings-note" style="font-size:0.85em; color:#6B6560; margin-top:6px;">
     Sections marked &larr; are linked to this machine&#39;s active OEE levers.
     Unresolved findings may be contributing to the gaps shown above.
   </p>
@@ -189,31 +211,37 @@
 {% endif %}
 
 {% if m.pm_summary %}
-<table class="pm-table">
+<table class="pm-table" style="margin-top:14px; border-collapse:collapse; width:100%; max-width:480px; font-size:0.93em;">
   <thead>
-    <tr><th colspan="2">Critically Overdue Preventive Maintenance</th></tr>
-    <tr><th>Core PM</th><th class="pm-count">Overdue Count</th></tr>
+    <tr><th colspan="2" style="background:#E7F0E9; color:#006548; text-align:left; padding:6px 10px;">Critically Overdue Preventive Maintenance</th></tr>
+    <tr><th style="background:#E7F0E9; color:#006548; text-align:left; padding:6px 10px;">Core PM</th><th class="pm-count" style="background:#E7F0E9; color:#006548; text-align:right; padding:6px 10px;">Overdue Count</th></tr>
   </thead>
   <tbody>
     {% for row in m.pm_summary.by_core_pm %}
     <tr>
-      <td>{{ row.core_pm }}</td>
-      <td class="pm-count">{{ row.overdue_count }}</td>
+      <td style="padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ row.core_pm }}</td>
+      <td class="pm-count" style="text-align:right; padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ row.overdue_count }}</td>
     </tr>
     {% endfor %}
-    <tr class="pm-total-row">
-      <td><strong>Total</strong></td>
-      <td class="pm-count"><strong>{{ m.pm_summary.total_overdue }}</strong></td>
+    <tr class="pm-total-row" style="border-top:2px solid #DDE3DE; font-weight:bold;">
+      <td style="padding:5px 10px;"><strong>Total</strong></td>
+      <td class="pm-count" style="text-align:right; padding:5px 10px;"><strong>{{ m.pm_summary.total_overdue }}</strong></td>
     </tr>
   </tbody>
 </table>
 {% endif %}
-
+</div>
 {% endfor %}
 
-<div class="footer">
+<div class="footer" style="margin-top:32px; font-size:12px; color:#6B6560; border-top:1px solid #DDE3DE; padding-top:8px;">
   Generated automatically by the Folding Carton Actionable Intelligence Platform.
   Do not reply to this email.
 </div>
+
+  </td>
+</tr>
+</table>
+</td></tr>
+</table>
 </body>
 </html>

@@ -234,6 +234,56 @@ MAPPING LOAD
 FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - TimeReasonCodes.qvd]
 (qvd);
 
+// ------------------------------------------------------------
+// Approved reason descriptions for the machine-level Blanket
+// Wash / Feeder Trip KPIs. Matched on the FULL "Time Reason"
+// text, not the code prefix: the same code carries different
+// meanings at different plants (e.g. PQ58 = "Blanket - Wash
+// General" at one plant, "Offset/Picking" at another), and some
+// plants emit reason descriptions with no code prefix at all.
+// Delimiter is '|' because several descriptions contain commas.
+// Scope: Blanket Wash = wash events only; Feeder Trip = press
+// feeder proper only (no gluer/cutting/sheeter, no infeed/web
+// guide, no splicer/unwind-only codes).
+// ------------------------------------------------------------
+ApprovedRsnText_Map:
+MAPPING LOAD * INLINE [
+RsnText|RsnBucket
+PQBW-Blanket Wash Normal|BW
+PQBW-Blanket wash normal|BW
+PQB0-Blanket Wash Other|BW
+PQBO-Blanket Wash Other|BW
+PQB1-Blanket - Wash, lint|BW
+PQB2-Blanket - Wash, coating stock|BW
+PQBK-Wash blkt. Ink Piling|BW
+PQBP-Blanket Washed Board Debris|BW
+PQBP-Blanket washed board debris|BW
+PQ58-Blanket - Wash General|BW
+Blanket Wash|BW
+Blanket Wash Normal|BW
+Blanket Wash Other|BW
+PLF-Feeder - press crew|FT
+PLDF-Mechanical Feeder|FT
+PLG5-Feeder Trips - Operator|FT
+PLUO-Unwind/Feeder|FT
+FEEDER TRIPS- OPERATOR|FT
+Feeder Trips - Operator|FT
+Feeder Trips Operator|FT
+Feeder press crew|FT
+] (delimiter is '|');
+
+// Key: "Time Plant Reason Key" -> 'BW' | 'FT' | '' (unclassified)
+// Replaces the old substring WildMatch('*PQBW*'/'*PLG5*'/'*PLDF*'/'*PLF*'),
+// which false-matched PLF0 (Baldwin fountain solution) into Feeder Trip.
+// Lives until Section 41B; dropped with TimeReason_Name_Map in Section 47.
+RsnBucket_Map:
+MAPPING LOAD
+    "Time Plant Reason Key",
+    ApplyMap('ApprovedRsnText_Map', Trim("Time Reason"), '')
+FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - TimeReasonCodes.qvd]
+(qvd)
+WHERE Len(ApplyMap('ApprovedRsnText_Map', Trim("Time Reason"), '')) > 0;
+
 // ============================================================
 // SECTION 6: SUPPLEMENTARY DIMENSION — CARTON CATEGORY
 // ============================================================
@@ -262,23 +312,77 @@ WHERE Not IsNull("Order Operation Key");
 
 
 // ============================================================
-// SECTION 7B: PLANT MANAGER EMAIL MAPPING
-// PlantManagers.xlsx columns: Plant, Manager_Name, Manager_Email, CC_List
-// Used in Section 49 to stamp Manager_Email onto each summary row
-// so the Python notifier can group by Manager_Email with no second config
+// SECTION 7B: PLANT / REGIONAL MANAGER EMAIL MAPPING
+// PlantManagers.xlsx columns: Plant, Department, Manager_Name, Manager_Email,
+//   CC_List, Regional_Manager, Regional_Manager_Email
+// Grain: one row per Plant + Department (a plant with multiple departments
+// has multiple rows; Manager_Email may repeat across a plant's rows).
+// Used in Section 49 to stamp Manager_Email / Regional_Manager_Email onto
+// each summary row so the Python notifier can group by either with no
+// second config. Each value is resolved via a Plant+Department map with a
+// Plant-only fallback map (first-row-wins) for rows whose department isn't
+// in the workbook yet — see Routing_Match_Level in Section 49.
 // ============================================================
+
+// ---- Plant + Department keyed maps (primary lookup) ----
 
 PlantManager_Map:
 MAPPING LOAD
-    Text(Num(Plant, '0000')),
+    Right('0000' & Trim(Plant), 4) & '|' & Upper(Trim(Department)),
     Manager_Email
 FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
 (ooxml, embedded labels, table is PlantManagers);
 
 PlantManager_CC_Map:
 MAPPING LOAD
-    Text(Num(Plant, '0000')),
+    Right('0000' & Trim(Plant), 4) & '|' & Upper(Trim(Department)),
     CC_List
+FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
+(ooxml, embedded labels, table is PlantManagers);
+
+RegionalManager_Map:
+MAPPING LOAD
+    Right('0000' & Trim(Plant), 4) & '|' & Upper(Trim(Department)),
+    Regional_Manager_Email
+FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
+(ooxml, embedded labels, table is PlantManagers);
+
+RegionalManagerName_Map:
+MAPPING LOAD
+    Right('0000' & Trim(Plant), 4) & '|' & Upper(Trim(Department)),
+    Regional_Manager
+FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
+(ooxml, embedded labels, table is PlantManagers);
+
+// ---- Plant-only keyed maps (fallback when Plant+Department misses) ----
+// First-row-wins per plant — deliberate, documented fallback, not the
+// primary routing path.
+
+PlantManager_Fallback_Map:
+MAPPING LOAD
+    Right('0000' & Trim(Plant), 4),
+    Manager_Email
+FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
+(ooxml, embedded labels, table is PlantManagers);
+
+PlantManager_CC_Fallback_Map:
+MAPPING LOAD
+    Right('0000' & Trim(Plant), 4),
+    CC_List
+FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
+(ooxml, embedded labels, table is PlantManagers);
+
+RegionalManager_Fallback_Map:
+MAPPING LOAD
+    Right('0000' & Trim(Plant), 4),
+    Regional_Manager_Email
+FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
+(ooxml, embedded labels, table is PlantManagers);
+
+RegionalManagerName_Fallback_Map:
+MAPPING LOAD
+    Right('0000' & Trim(Plant), 4),
+    Regional_Manager
 FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
 (ooxml, embedded labels, table is PlantManagers);
 
@@ -362,13 +466,13 @@ LOAD
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM",  0))                        as ScrapQty_OEE,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in BUOM",     0))                        as GoodQty_BUOM,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in BUOM",     0))                        as ScrapQty_BUOM,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
+    Sum(If(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '') = 'BW'
         AND fSched = 1, "Time - Down", 0))                             as BlanketWashHours,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
+    Sum(If(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '') = 'BW'
         AND fSched = 1, "Down Count",  0))                             as BlanketWashEvents,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
+    Sum(If(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '') = 'FT'
         AND fSched = 1, "Time - Down", 0))                             as FeederTripHours,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
+    Sum(If(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '') = 'FT'
         AND fSched = 1, "Down Count",  0))                             as FeederTripEvents
 RESIDENT JobFact_Raw
 WHERE Date >= $(v2YearStart) AND Date < $(vCurrentWeekStart)
@@ -489,13 +593,13 @@ LOAD
     Sum(If(fSched = 1, "Setup Count",       0))                        as SetupCount,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in OEE UOM",  0))                        as GoodQty_OEE,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM",  0))                        as ScrapQty_OEE,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
+    Sum(If(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '') = 'BW'
         AND fSched = 1, "Time - Down", 0))                             as BlanketWashHours,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
+    Sum(If(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '') = 'BW'
         AND fSched = 1, "Down Count",  0))                             as BlanketWashEvents,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
+    Sum(If(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '') = 'FT'
         AND fSched = 1, "Time - Down", 0))                             as FeederTripHours,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
+    Sum(If(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '') = 'FT'
         AND fSched = 1, "Down Count",  0))                             as FeederTripEvents
 RESIDENT JobFact_Raw
 WHERE
@@ -578,7 +682,8 @@ WHERE
     Date >= $(v2YearStart)
     AND Date < $(vCurrentWeekStart)
     AND Not IsNull("Time Plant Reason Key")
-    AND Not WildMatch("Time Plant Reason Key", '*MR0*', '*PQBW*', '*PLG5*', '*PLDF*', '*PLF*')
+    AND Not WildMatch("Time Plant Reason Key", '*MR0*')
+    AND Len(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '')) = 0
     AND ApplyMap('QualifyingRuns_Map',
             Date & '|' & [WC Object ID] & '|' & [Shift Code] & '|' & Die, 0) = 1
 GROUP BY
@@ -657,13 +762,13 @@ LOAD
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in OEE UOM",  0))                        as ScrapQty_OEE,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Yield in BUOM",     0))                        as GoodQty_BUOM,
     Sum(If(If(IsNull(fSched), 2, fSched) >= 1, "Scrap in BUOM",     0))                        as ScrapQty_BUOM,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
+    Sum(If(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '') = 'BW'
         AND fSched = 1, "Time - Down", 0))                             as BlanketWashHours,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PQBW*')
+    Sum(If(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '') = 'BW'
         AND fSched = 1, "Down Count",  0))                             as BlanketWashEvents,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
+    Sum(If(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '') = 'FT'
         AND fSched = 1, "Time - Down", 0))                             as FeederTripHours,
-    Sum(If(WildMatch("Time Plant Reason Key", '*PLG5*', '*PLDF*', '*PLF*')
+    Sum(If(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '') = 'FT'
         AND fSched = 1, "Down Count",  0))                             as FeederTripEvents
 RESIDENT JobFact_Raw
 WHERE Date >= $(v13WeekStart) AND Date < $(vCurrentWeekStart)
@@ -2018,7 +2123,8 @@ FROM [$(vFactQVD)]
 (qvd)
 WHERE Date >= $(v2WeekStart) AND Date < $(vCurrentWeekStart)
     AND Len(Trim("Time Plant Reason Key")) > 0
-    AND Not WildMatch("Time Plant Reason Key", '*MR0*', '*PQBW*', '*PLG5*', '*PLDF*', '*PLF*')
+    AND Not WildMatch("Time Plant Reason Key", '*MR0*')
+    AND Len(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '')) = 0
 GROUP BY "WC Object ID", Die, "Plant Material Key", "Time Plant Reason Key";
 
 CurPeriod_DwnReason_DieLvl:
@@ -2206,7 +2312,8 @@ FROM [$(vFactQVD)]
 (qvd)
 WHERE Date >= $(v4WeekStart) AND Date < $(vCurrentWeekStart)
     AND Len(Trim("Time Plant Reason Key")) > 0
-    AND Not WildMatch("Time Plant Reason Key", '*MR0*', '*PQBW*', '*PLG5*', '*PLDF*', '*PLF*')
+    AND Not WildMatch("Time Plant Reason Key", '*MR0*')
+    AND Len(ApplyMap('RsnBucket_Map', "Time Plant Reason Key", '')) = 0
 GROUP BY WeekStart(Date, 0, $(vWeekStartDay)), "WC Object ID", "Time Plant Reason Key";
 
 Rsn_Down_Streak_Raw:
@@ -2696,6 +2803,8 @@ DROP TABLE ReasonInsightRecords;
 DROP MAPPING TABLE Department_IR_Map;
 DROP MAPPING TABLE PlantWC_IR_Map;
 DROP MAPPING TABLE TimeReason_Name_Map;
+DROP MAPPING TABLE RsnBucket_Map;
+DROP MAPPING TABLE ApprovedRsnText_Map;
 
 
 
@@ -3357,8 +3466,26 @@ LOAD
     [Plant - WC],
     Department,
     Period_Start,
-    ApplyMap('PlantManager_Map',    Plant,                          Null())     as Manager_Email,
-    ApplyMap('PlantManager_CC_Map', Plant,                          Null())     as CC_List,
+    ApplyMap('PlantManager_Map',
+        Right('0000' & Trim(Plant), 4) & '|' & Upper(Trim(Department)),
+        ApplyMap('PlantManager_Fallback_Map', Right('0000' & Trim(Plant), 4), Null())
+    )                                                                              as Manager_Email,
+    ApplyMap('PlantManager_CC_Map',
+        Right('0000' & Trim(Plant), 4) & '|' & Upper(Trim(Department)),
+        ApplyMap('PlantManager_CC_Fallback_Map', Right('0000' & Trim(Plant), 4), Null())
+    )                                                                              as CC_List,
+    ApplyMap('RegionalManager_Map',
+        Right('0000' & Trim(Plant), 4) & '|' & Upper(Trim(Department)),
+        ApplyMap('RegionalManager_Fallback_Map', Right('0000' & Trim(Plant), 4), Null())
+    )                                                                              as Regional_Manager_Email,
+    ApplyMap('RegionalManagerName_Map',
+        Right('0000' & Trim(Plant), 4) & '|' & Upper(Trim(Department)),
+        ApplyMap('RegionalManagerName_Fallback_Map', Right('0000' & Trim(Plant), 4), Null())
+    )                                                                              as Regional_Manager_Name,
+    If(Len(ApplyMap('PlantManager_Map',
+            Right('0000' & Trim(Plant), 4) & '|' & Upper(Trim(Department)), '')) > 0, 'Department',
+       If(Len(ApplyMap('PlantManager_Fallback_Map', Right('0000' & Trim(Plant), 4), '')) > 0, 'Plant', 'None')
+    )                                                                              as Routing_Match_Level,
     ApplyMap('TotalImpact_Map',      Plant & '|' & [WC Object ID],  Null())     as Total_Sheet_Impact,
     ApplyMap('Outcome1_Map',         Plant & '|' & [WC Object ID],  Null())     as Outcome_1_Name,
     ApplyMap('Outcome1_Sheets_Map',  Plant & '|' & [WC Object ID],  Null())     as Outcome_1_Sheets,

@@ -21,3 +21,7 @@ admin_email: "ashish.mhatre@graphicpkg.com"
 # Email subject line (Period_Start date is appended automatically)
 email_subject_prefix: "Weekly OEE Insight Digest"
 
+# Regional manager summary email — subject prefix and machines shown per department
+regional_subject_prefix: "Regional OEE Summary"
+regional_top_n: 3
+

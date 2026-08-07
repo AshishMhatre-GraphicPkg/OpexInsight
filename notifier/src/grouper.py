@@ -27,6 +27,9 @@ _COL_DRIVER_PARENT = "Driver_Parent_Name"
 _COL_DRIVER_SHEETS = "Driver_Parent_Sheets"
 _COL_OUTCOME1_CUR = "Outcome_1_Cur_Actual"
 _COL_OUTCOME1_BSP = "Outcome_1_BSP_Benchmark"
+_COL_RM_EMAIL = "Regional_Manager_Email"
+_COL_RM_NAME = "Regional_Manager_Name"
+_COL_MATCH_LEVEL = "Routing_Match_Level"
 
 _OVERVIEW_LEVER_LABELS = {"Downtime Reason": "Downtime"}
 
@@ -204,6 +207,53 @@ def _build_levers(row: pd.Series) -> list[LeverSummary]:
     return levers
 
 
+def build_machine(
+    row: pd.Series,
+    findings_df: pd.DataFrame | None = None,
+    pm_df: pd.DataFrame | None = None,
+) -> MachineSummary:
+    """Build a single MachineSummary from one MachineWeekSummary.csv row.
+
+    Shared by group_by_manager() and regional.group_by_regional_manager() so
+    both digest types build machines identically.
+    """
+    levers = _build_levers(row)
+    machine_findings = None
+    if findings_df is not None:
+        from .findings import build_summary_for_machine
+        plant = str(row.get("Plant", ""))
+        wc_id = str(row.get("WC Object ID", ""))
+        machine_findings = build_summary_for_machine(
+            findings_df, plant, wc_id, [lv.name for lv in levers]
+        )
+
+    machine_pm = None
+    if pm_df is not None:
+        from .pm_compliance import build_pm_summary_for_machine
+        wc_id = str(row.get("WC Object ID", ""))
+        machine_pm = build_pm_summary_for_machine(pm_df, wc_id)
+
+    driver_parent = _nan_to_none(row.get(_COL_DRIVER_PARENT))
+    driver_sheets_raw = row.get(_COL_DRIVER_SHEETS)
+    cur_actual_raw = _nan_to_none(row.get(_COL_OUTCOME1_CUR))
+    bsp_raw = _nan_to_none(row.get(_COL_OUTCOME1_BSP))
+    return MachineSummary(
+        plant_wc=str(row[_COL_PLANT_WC]),
+        department=str(row.get(_COL_DEPT, "")),
+        period_start=str(row[_COL_PERIOD]),
+        total_sheet_impact=float(row.get(_COL_TOTAL, 0) or 0),
+        outcome_1=_nan_to_none(row.get(_COL_O1_NAME)),
+        outcome_1_sheets=float(row[_COL_O1_SHEETS]) if _nan_to_none(row.get(_COL_O1_SHEETS)) is not None else None,
+        outcome_1_cur_actual=float(cur_actual_raw) if cur_actual_raw is not None else None,
+        outcome_1_bsp_benchmark=float(bsp_raw) if bsp_raw is not None else None,
+        driver_parent=str(driver_parent) if driver_parent else None,
+        driver_parent_sheets=float(driver_sheets_raw) if _nan_to_none(driver_sheets_raw) is not None else None,
+        levers=levers,
+        findings=machine_findings,
+        pm_summary=machine_pm,
+    )
+
+
 def group_by_manager(
     df: pd.DataFrame,
     findings_df: pd.DataFrame | None = None,
@@ -237,45 +287,7 @@ def group_by_manager(
         cc = _nan_to_none(group[_COL_CC].iloc[0]) if _COL_CC in group.columns else None
         period = str(group[_COL_PERIOD].iloc[0])
 
-        machines = []
-        for _, row in group.iterrows():
-            levers = _build_levers(row)
-            machine_findings = None
-            if findings_df is not None:
-                from .findings import build_summary_for_machine
-                plant = str(row.get("Plant", ""))
-                wc_id = str(row.get("WC Object ID", ""))
-                machine_findings = build_summary_for_machine(
-                    findings_df, plant, wc_id, [lv.name for lv in levers]
-                )
-
-            machine_pm = None
-            if pm_df is not None:
-                from .pm_compliance import build_pm_summary_for_machine
-                wc_id = str(row.get("WC Object ID", ""))
-                machine_pm = build_pm_summary_for_machine(pm_df, wc_id)
-
-            driver_parent = _nan_to_none(row.get(_COL_DRIVER_PARENT))
-            driver_sheets_raw = row.get(_COL_DRIVER_SHEETS)
-            cur_actual_raw = _nan_to_none(row.get(_COL_OUTCOME1_CUR))
-            bsp_raw = _nan_to_none(row.get(_COL_OUTCOME1_BSP))
-            machines.append(
-                MachineSummary(
-                    plant_wc=str(row[_COL_PLANT_WC]),
-                    department=str(row.get(_COL_DEPT, "")),
-                    period_start=str(row[_COL_PERIOD]),
-                    total_sheet_impact=float(row.get(_COL_TOTAL, 0) or 0),
-                    outcome_1=_nan_to_none(row.get(_COL_O1_NAME)),
-                    outcome_1_sheets=float(row[_COL_O1_SHEETS]) if _nan_to_none(row.get(_COL_O1_SHEETS)) is not None else None,
-                    outcome_1_cur_actual=float(cur_actual_raw) if cur_actual_raw is not None else None,
-                    outcome_1_bsp_benchmark=float(bsp_raw) if bsp_raw is not None else None,
-                    driver_parent=str(driver_parent) if driver_parent else None,
-                    driver_parent_sheets=float(driver_sheets_raw) if _nan_to_none(driver_sheets_raw) is not None else None,
-                    levers=levers,
-                    findings=machine_findings,
-                    pm_summary=machine_pm,
-                )
-            )
+        machines = [build_machine(row, findings_df, pm_df) for _, row in group.iterrows()]
 
         digests.append(
             ManagerDigest(

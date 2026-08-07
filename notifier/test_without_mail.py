@@ -25,7 +25,9 @@ from src.findings import load_findings
 from src.pm_compliance import load_pm_compliance
 from src.freshness import StaleDataError, assert_fresh
 from src.grouper import group_by_manager
-from src.renderer import render_html, render_text
+from src.regional import group_by_regional_manager
+from src.renderer import render_html, render_regional_html, render_regional_text, render_text
+from src.routing_check import find_routing_mismatches
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +61,18 @@ def _write_previews(digests, subject: str, out_dir: Path) -> None:
         log.info("Written: %s.{html,txt}", base)
 
 
-def _write_index(digests, subject: str, out_dir: Path) -> None:
+def _write_regional_previews(regional_digests, subject: str, out_dir: Path) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for digest in regional_digests:
+        html = render_regional_html(digest, subject)
+        text = render_regional_text(digest, subject)
+        base = out_dir / _safe_name(digest.regional_manager_email)
+        base.with_suffix(".html").write_text(html, encoding="utf-8")
+        base.with_suffix(".txt").write_text(text, encoding="utf-8")
+        log.info("Written: %s.{html,txt}", base)
+
+
+def _write_index(digests, regional_digests, subject: str, regional_subject: str, out_dir: Path) -> None:
     rows = []
     for digest in digests:
         safe = _safe_name(digest.manager_email)
@@ -80,6 +93,19 @@ def _write_index(digests, subject: str, out_dir: Path) -> None:
             f'</tr>'
         )
 
+    regional_rows = []
+    for digest in regional_digests:
+        safe = _safe_name(digest.regional_manager_email)
+        regional_rows.append(
+            f'<tr>'
+            f'<td><a href="regional/{safe}.html">{digest.regional_manager_email}</a></td>'
+            f'<td style="text-align:right">{digest.plants_covered}</td>'
+            f'<td style="text-align:right">{len(digest.departments)}</td>'
+            f'<td style="text-align:right">{digest.machines_impacted}</td>'
+            f'<td style="text-align:right">{digest.total_sheets:,.0f}</td>'
+            f'</tr>'
+        )
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -87,14 +113,14 @@ def _write_index(digests, subject: str, out_dir: Path) -> None:
   <title>Preview index — {subject}</title>
   <style>
     body {{ font-family: sans-serif; padding: 2rem; }}
-    table {{ border-collapse: collapse; width: 100%; max-width: 700px; }}
+    table {{ border-collapse: collapse; width: 100%; max-width: 700px; margin-bottom: 2rem; }}
     th, td {{ border: 1px solid #ccc; padding: 0.5rem 1rem; text-align: left; }}
     th {{ background: #f0f0f0; }}
     a {{ color: #1a73e8; }}
   </style>
 </head>
 <body>
-  <h2>Email preview index</h2>
+  <h2>Plant manager previews</h2>
   <p><strong>Subject:</strong> {subject}</p>
   <table>
     <thead>
@@ -108,6 +134,23 @@ def _write_index(digests, subject: str, out_dir: Path) -> None:
     </thead>
     <tbody>
       {''.join(rows)}
+    </tbody>
+  </table>
+
+  <h2>Regional manager previews</h2>
+  <p><strong>Subject:</strong> {regional_subject}</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Regional Manager</th>
+        <th>Plants</th>
+        <th>Departments</th>
+        <th>Machines Impacted</th>
+        <th>Total Sheet Impact</th>
+      </tr>
+    </thead>
+    <tbody>
+      {''.join(regional_rows) if regional_rows else '<tr><td colspan="5">No regional digests — Regional_Manager_Email column not present or empty.</td></tr>'}
     </tbody>
   </table>
 </body>
@@ -187,10 +230,20 @@ def main(args: argparse.Namespace) -> int:
     if "WC Object ID" in df.columns:
         log.info("Summary WC Object IDs: %s", df["WC Object ID"].astype(str).unique().tolist())
 
-    digests = group_by_manager(df, findings_df=findings_df, pm_df=pm_df)
+    mismatches = find_routing_mismatches(df)
+    if mismatches:
+        log.warning("Routing fallbacks (%d): %s", len(mismatches), mismatches)
+    else:
+        log.info("No routing fallbacks — every row matched Plant+Department")
 
-    if not digests:
-        log.warning("No manager digests — MachineWeekSummary.csv may be empty")
+    digests = group_by_manager(df, findings_df=findings_df, pm_df=pm_df)
+    regional_digests = group_by_regional_manager(
+        df, findings_df=findings_df, pm_df=pm_df, top_n=config.get("regional_top_n", 3)
+    )
+    log.info("Regional managers: %d", len(regional_digests))
+
+    if not digests and not regional_digests:
+        log.warning("No digests — MachineWeekSummary.csv may be empty")
         return 0
 
     total_machines_count = sum(len(d.machines) for d in digests)
@@ -199,18 +252,20 @@ def main(args: argparse.Namespace) -> int:
     log.info("Findings attached: %d / %d machines", attached_findings, total_machines_count)
     log.info("PM blocks attached: %d / %d machines", attached_pm, total_machines_count)
 
-    period_start = digests[0].period_start
+    period_start = digests[0].period_start if digests else regional_digests[0].period_start
     subject = f"{config.get('email_subject_prefix', 'Weekly OEE Insight')} — {period_start}"
+    regional_subject = f"{config.get('regional_subject_prefix', 'Regional OEE Summary')} — {period_start}"
 
     out_dir = Path(args.out)
     _write_previews(digests, subject, out_dir)
-    _write_index(digests, subject, out_dir)
+    _write_regional_previews(regional_digests, regional_subject, out_dir / "regional")
+    _write_index(digests, regional_digests, subject, regional_subject, out_dir)
 
     total_machines = sum(len(d.machines) for d in digests)
     findings_rows = len(findings_df) if findings_df is not None else 0
     print(
-        f"\nDone — {len(digests)} manager(s), {total_machines} machine(s), "
-        f"findings rows={findings_rows}\n"
+        f"\nDone — {len(digests)} manager(s), {len(regional_digests)} regional manager(s), "
+        f"{total_machines} machine(s), findings rows={findings_rows}\n"
         f"Open: {out_dir.resolve() / '_index.html'}"
     )
     return 0

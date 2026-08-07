@@ -1,7 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(git add *)",
+      "Bash(git checkout *)",
+      "Bash(git cherry-pick *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Ashish Mhatre\\\\Desktop\\\\OpexInsights\\\\notifier\" -Recurse -File)",
+      "Bash(Select-Object FullName)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python -c ' *)",
+      "Bash(python *)",
+      "Bash(git push *)",
+      "Bash(git *)"
     ]
   }
 }

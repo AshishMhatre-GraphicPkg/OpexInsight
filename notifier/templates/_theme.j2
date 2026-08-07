@@ -1,0 +1,94 @@
+{# ============================================================
+   Brand theme tokens — single source of truth for both digest
+   templates. Change a color/font here, not in the templates.
+
+   Palette: Green #006548, Light Green #76BC21, Black #3D3935.
+   Streaks/warnings use amber, not red — red directly against the
+   brand green is the hardest pairing for red-green color vision
+   deficiency, and reads as "error" when the signal is really
+   "watch this trend."
+
+   Import in a template with:
+       {% import '_theme.j2' as t %}
+   and reference tokens as {{ t.primary }}, or call the macros
+   below, e.g. {{ t.kpi_tile('1,234', 'Sheets lost vs BSP') }}.
+
+   Layout is table-based with inline styles throughout — Outlook
+   desktop (Word rendering engine) drops border-radius, most box
+   model CSS, and ignores <style> blocks entirely in Outlook.com.
+   Nothing load-bearing lives in <style>; it is presentation-layer
+   enhancement only (hover states, @media stacking on mobile).
+============================================================ #}
+
+{% set primary = "#006548" %}
+{% set primary_dark = "#004D36" %}
+{% set accent = "#76BC21" %}
+{% set ink = "#3D3935" %}
+{% set ink_muted = "#6B6560" %}
+{% set surface = "#F4F8F3" %}
+{% set surface_alt = "#E7F0E9" %}
+{% set border = "#DDE3DE" %}
+{% set attn_text = "#8A5A00" %}
+{% set attn_bg = "#FFF8E8" %}
+{% set attn_rule = "#E0A800" %}
+{% set white = "#FFFFFF" %}
+{% set font_stack = "Segoe UI, Calibri, Arial, sans-serif" %}
+
+{% macro header_band(title, subtitle="") %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:{{ primary_dark }};">
+  <tr>
+    <td style="padding:20px 28px;">
+      <div style="font-family:{{ font_stack }}; font-size:20px; line-height:1.3; font-weight:600; color:{{ white }};">{{ title }}</div>
+      {% if subtitle %}
+      <div style="font-family:{{ font_stack }}; font-size:13px; color:{{ accent }}; margin-top:4px;">{{ subtitle }}</div>
+      {% endif %}
+    </td>
+  </tr>
+</table>
+{% endmacro %}
+
+{% macro kpi_tile(value, label) %}
+<td style="padding:0 6px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:{{ surface }};">
+    <tr><td style="height:3px; background-color:{{ accent }}; line-height:3px; font-size:1px;">&nbsp;</td></tr>
+    <tr>
+      <td style="padding:14px 16px; text-align:center;">
+        <div style="font-family:{{ font_stack }}; font-size:22px; font-weight:700; color:{{ primary }}; font-variant-numeric:tabular-nums;">{{ value }}</div>
+        <div style="font-family:{{ font_stack }}; font-size:11px; color:{{ ink_muted }}; text-transform:uppercase; letter-spacing:0.05em; margin-top:3px;">{{ label }}</div>
+      </td>
+    </tr>
+  </table>
+</td>
+{% endmacro %}
+
+{% macro section_heading(text) %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:{{ surface_alt }}; margin-top:22px;">
+  <tr>
+    <td style="padding:8px 14px; font-family:{{ font_stack }}; font-size:14px; font-weight:700; color:{{ primary }};">{{ text }}</td>
+  </tr>
+</table>
+{% endmacro %}
+
+{% macro maint_banner(text) %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:12px;">
+  <tr>
+    <td style="border-left:3px solid {{ attn_rule }}; background-color:{{ attn_bg }}; padding:8px 12px; font-family:{{ font_stack }}; font-size:13px; color:{{ attn_text }};">{{ text }}</td>
+  </tr>
+</table>
+{% endmacro %}
+
+{% macro th(text, align="left") %}
+<th align="{{ align }}" style="background-color:{{ surface_alt }}; color:{{ primary }}; font-family:{{ font_stack }}; font-size:12px; text-align:{{ align }}; padding:7px 10px; border-bottom:1px solid {{ border }};">{{ text }}</th>
+{% endmacro %}
+
+{% macro td(text, align="left", bold=false) %}
+<td align="{{ align }}" style="font-family:{{ font_stack }}; font-size:13px; color:{{ ink }}; text-align:{{ align }}; padding:6px 10px; border-bottom:1px solid {{ border }};{% if bold %} font-weight:700;{% endif %}">{{ text }}</td>
+{% endmacro %}
+
+{% macro footer(note) %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px; border-top:1px solid {{ border }};">
+  <tr>
+    <td style="padding-top:10px; font-family:{{ font_stack }}; font-size:11px; color:{{ ink_muted }};">{{ note }}</td>
+  </tr>
+</table>
+{% endmacro %}

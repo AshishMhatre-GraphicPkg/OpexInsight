@@ -7,7 +7,8 @@ import pytest
 
 from src.grouper import group_by_manager
 from src.findings import load_findings
-from src.renderer import render_html, render_text
+from src.regional import group_by_regional_manager
+from src.renderer import render_html, render_regional_html, render_regional_text, render_text
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_summary.csv"
 FINDINGS_FIXTURE = Path(__file__).parent / "fixtures" / "sample_findings.csv"
@@ -248,3 +249,45 @@ def test_html_no_scrap_reason_in_output(digest_a):
 def test_html_no_scrap_reason_digest_b(digest_b):
     html = render_html(digest_b, "Test Subject")
     assert "Scrap Reason" not in html
+
+
+# --- Regional digest rendering ---
+
+@pytest.fixture()
+def regional_digest_x():
+    df = pd.read_csv(FIXTURE)
+    digests = group_by_regional_manager(df)
+    return next(d for d in digests if d.regional_manager_email == "regional.x@company.com")
+
+
+def test_regional_html_department_headings_present(regional_digest_x):
+    html = render_regional_html(regional_digest_x, "Test Regional Subject")
+    assert "Gluer" in html
+    assert "Sheetfed Printing" in html
+
+
+def test_regional_html_top_three_cap(regional_digest_x):
+    html = render_regional_html(regional_digest_x, "Test Regional Subject")
+    # Gluer has 4 impacted machines; the smallest (Dallas Gluer 02, 6,000) is capped out
+    assert "Elk Grove / Gluer 01" in html
+    assert "Dallas / Gluer 01" in html
+    assert "Elk Grove / Gluer 02" in html
+    assert "Dallas / Gluer 02" not in html
+
+
+def test_regional_html_plant_rollup_present(regional_digest_x):
+    html = render_regional_html(regional_digest_x, "Test Regional Subject")
+    assert "Elk Grove" in html
+    assert "Dallas" in html
+    assert "Chicago" in html
+
+
+def test_regional_html_no_maintenance_line_when_absent(regional_digest_x):
+    html = render_regional_html(regional_digest_x, "Test Regional Subject")
+    assert "Maintenance across the region" not in html
+
+
+def test_regional_text_contains_department_and_plant(regional_digest_x):
+    text = render_regional_text(regional_digest_x, "Test Regional Subject")
+    assert "GLUER" in text
+    assert "Elk Grove" in text

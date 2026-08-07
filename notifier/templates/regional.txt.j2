@@ -1,0 +1,47 @@
+{{ subject }}
+{{ "=" * 60 }}
+{% if digest.regional_manager_name %}
+{{ digest.regional_manager_name }} — Region Summary
+{% endif %}
+
+{{ "-" * 60 }}
+  Sheets lost vs BSP : {{ digest.total_sheets | comma_int }}
+  Plants covered     : {{ digest.plants_covered }}
+  Machines impacted  : {{ digest.machines_impacted }}
+{% if digest.top_driver_name %}
+  Top driver         : {{ digest.top_driver_name }} ({{ digest.top_driver_sheets | comma_int }} sheets)
+{% endif %}
+{{ "=" * 60 }}
+
+{% if digest.has_maintenance %}
+Maintenance across the region: {{ digest.maint_open }} open {{ digest.maint_open | pluralize('finding') }}{% if digest.maint_priority10 %} ({{ digest.maint_priority10 }} priority-10){% endif %}, {{ digest.maint_overdue_pm }} {{ digest.maint_overdue_pm | pluralize('PM') }} overdue.
+
+{% endif %}
+{% if digest.plant_rollups %}
+PLANTS
+{{ "-" * 60 }}
+{% set col1 = 24 %}
+{{ "Plant".ljust(col1) }}| Sheets Lost  | Machines | Worst Machine
+{{ "-" * col1 }}|--------------|----------|------------------
+{% for p in digest.plant_rollups %}
+{{ p.plant[:col1 - 1].ljust(col1) }}| {{ "%12s" | format(p.sheets | comma_int) }} | {{ "%8d" | format(p.machines_impacted) }} | {{ p.worst_machine if p.worst_machine else '-' }}
+{% endfor %}
+
+{% endif %}
+{% for d in digest.departments %}
+{{ d.department | upper }}
+{{ "-" * 60 }}
+{{ d.sheets | comma_int }} sheets lost | {{ d.machines_impacted }} {{ d.machines_impacted | pluralize('machine') }} impacted | {{ d.plants_count }} {{ d.plants_count | pluralize('plant') }}
+
+{% if d.top_machines %}
+{% set col1 = 32 %}
+{{ "Machine".ljust(col1) }}| Cur OEE | BSP OEE | Sheets Lost  | Top Lever
+{{ "-" * col1 }}|---------|---------|--------------|------------------
+{% for row in d.top_machines %}
+{{ row.plant_wc[:col1 - 1].ljust(col1) }}| {{ "%7s" | format(row.cur_oee | percent if row.cur_oee is not none else '-') }} | {{ "%7s" | format(row.bsp_oee | percent if row.bsp_oee is not none else '-') }} | {{ "%12s" | format(row.total_sheet_impact | comma_int) }} | {{ row.top_lever if row.top_lever else '-' }}
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+---
+Generated automatically. For per-machine detail, see the plant manager digest for each plant in this region. Do not reply.

@@ -6,7 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A Python email notifier that sends Monday-morning OEE Insight digests to plant managers. It reads `MachineWeekSummary.csv` from SharePoint (written by Qlik Section 49), checks freshness, fetches Maintenance Findings and PM Compliance data, groups rows by manager, renders Jinja2 templates, and sends via Microsoft Graph API.
+A Python email notifier that sends Monday-morning OEE Insight digests to
+plant managers **and** high-level region synopses to regional managers. It
+reads `MachineWeekSummary.csv` from SharePoint (written by Qlik Section 49),
+checks freshness, fetches Maintenance Findings and PM Compliance data,
+groups rows by `Manager_Email` (plant digests) and by `Regional_Manager_Email`
+(regional digests), renders Jinja2 templates on the company brand theme
+(Green `#006548` / Light Green `#76BC21` / Black `#3D3935`), and sends via
+Microsoft Graph API.
+
+`PlantManagers.xlsx` — the source of `Manager_Email` / `Regional_Manager_Email`
+— is read by **Qlik** (Section 7B of `InsightOpexv1.qvs`), not by this
+notifier. Its grain is one row per **Plant + Department**; see the "Routing"
+section below.
 
 ---
 
@@ -16,13 +28,15 @@ A Python email notifier that sends Monday-morning OEE Insight digests to plant m
 # Install (editable, with dev extras)
 pip install -e ".[dev]"
 
-# Dry run — renders per-manager HTML to out/preview/ without sending
+# Dry run — renders per-manager HTML to out/preview/ and per-region HTML to
+# out/preview/regional/, without sending
 python main.py --dry-run
 
-# Live send
+# Live send — plant digests + regional digests
 python main.py
 
-# Preview with real SharePoint data — no mail sent, HTML saved to out/test_preview/
+# Preview with real SharePoint data — no mail sent, HTML saved to
+# out/test_preview/ (plant) and out/test_preview/regional/ (regional)
 python test_without_mail.py --ignore-freshness
 
 # Run tests
@@ -30,6 +44,7 @@ pytest tests/
 
 # Run a single test file
 pytest tests/test_grouper.py
+pytest tests/test_regional.py
 ```
 
 ---
@@ -37,53 +52,136 @@ pytest tests/test_grouper.py
 ## Architecture
 
 ```
-main.py                  # Orchestrator: fetch → freshness → findings → PM → group → render → send
+main.py                  # Orchestrator: fetch → freshness → findings → PM → routing check → group → render → send
 test_without_mail.py     # Fetch real SharePoint data, render previews to out/test_preview/ — no mail sent
 src/
   fetch.py               # Graph API: fetch_csv (with mtime), fetch_findings_csv, fetch_pm_xlsx
   freshness.py           # StaleDataError raised if CSV mtime > freshness_max_hours
-  grouper.py             # group_by_manager(df, findings_df=None, pm_df=None) → list[ManagerDigest]
+  grouper.py             # build_machine(row, ...) → MachineSummary; group_by_manager(df, ...) → list[ManagerDigest]
+  regional.py            # group_by_regional_manager(df, ...) → list[RegionalDigest]; reuses grouper.build_machine
+  routing_check.py       # find_routing_mismatches(df) → list[str], from Routing_Match_Level
   findings.py            # Pure: load_findings(), build_summary_for_machine() → FindingsSummary | None
   pm_compliance.py       # Pure: load_pm_compliance(), build_pm_summary_for_machine() → PMSummary | None
-  renderer.py            # Jinja2 wrappers: render_html / render_text / render_admin_alert
+  renderer.py            # Jinja2 wrappers: render_html/text, render_regional_html/text, render_admin_alert
   mailer.py              # Graph API: _post_with_retry (3 attempts, exp backoff), send_mail, send_admin_alert
   logging_setup.py       # configure() called once at startup
 templates/
-  email.html.j2          # Per-manager HTML digest; findings block then PM block per machine
-  email.txt.j2           # Plain-text fallback; includes findings and PM blocks
+  _theme.j2               # Brand color/type tokens + shared Jinja macros — single source of truth for styling
+  email.html.j2            # Per-manager HTML digest; findings block then PM block per machine
+  email.txt.j2              # Plain-text fallback; includes findings and PM blocks
+  regional.html.j2, regional.txt.j2  # Per-region synopsis: KPI tiles, plant roll-up, top-3-per-department tables
   admin_alert.html.j2
 tests/
-  fixtures/sample_summary.csv            # 3 machines, 2 managers
+  fixtures/sample_summary.csv            # 6 machines / 4 plant managers / 2 regional managers (see below)
   fixtures/sample_findings.csv           # 7 rows, 3 machines — Open/Missing WO/overdue/corroborated mix
   fixtures/sample_pm_compliance.xlsx     # Sheet1 blank; Sheet2: 7 rows, 3 machines, mixed Urgency
   test_grouper.py         # Unit tests for grouper (no network)
+  test_regional.py        # Unit tests for regional grouping + routing mismatch detection (no network)
   test_findings.py        # Unit tests for findings module (no network)
   test_pm_compliance.py   # Unit tests for pm_compliance module (no network)
-  test_renderer.py        # Assertion-style template tests (no network, no snapshots)
+  test_renderer.py        # Assertion-style template tests, plant + regional (no network, no snapshots)
   test_freshness.py
-config.yaml   # sharepoint_site_id, sharepoint_file_path, sharepoint_findings_path,
-              # sharepoint_pm_path, sender_upn, admin_email
+config.yaml   # sharepoint_site_id, sharepoint_file_path, sharepoint_findings_path, sharepoint_pm_path,
+              # sender_upn, admin_email, email_subject_prefix, regional_subject_prefix, regional_top_n
 .env          # AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET (gitignored)
 ```
+
+**`tests/fixtures/sample_summary.csv` layout:** Elk Grove (Gluer, 2 machines)
+and Chicago (Sheetfed Printing, 1 machine) route to `manager.a@company.com`
+/ `manager.b@company.com` as before. Dallas (Gluer, 2 machines) and Denver
+(Web Cutting, 1 machine) were added for regional-digest coverage, routing
+to `manager.c@company.com` / `manager.d@company.com`. All six machines
+share regional manager `regional.x@company.com` (Elk Grove, Chicago,
+Dallas) except Denver, which is `regional.y@company.com` — giving the
+Gluer department 4 impacted machines under regional.x (to exercise the
+top-3-per-department cap) and one single-plant, single-department region
+(regional.y) as a minimal case. Dallas's first row carries
+`Routing_Match_Level = 'Plant'` to exercise the fallback-detection tests;
+every other row is `'Department'`. Dallas/Denver machines intentionally
+have no Findings.csv / PM rows — `test_findings.py` only asserts findings
+presence for the original 3 machines.
 
 ### Data flow
 
 ```
 SharePoint
-  MachineWeekSummary.csv ──► fetch_csv ──► freshness check ──► group_by_manager ──► ManagerDigest[]
-  Findings.csv ────────────► fetch_findings_csv ──► load_findings ──► findings_df ──┤
-  PMComplianceDump.xlsx ───► fetch_pm_xlsx ──► load_pm_compliance ──► pm_df ─────────┘
+  MachineWeekSummary.csv ──► fetch_csv ──► freshness check ──┬─► find_routing_mismatches ──► admin alert (non-fatal)
+                                                              ├─► group_by_manager ─────────► ManagerDigest[]
+                                                              └─► group_by_regional_manager ─► RegionalDigest[]
+  Findings.csv ────────────► fetch_findings_csv ──► load_findings ──► findings_df ────────────────┤ (both groupers)
+  PMComplianceDump.xlsx ───► fetch_pm_xlsx ──► load_pm_compliance ──► pm_df ───────────────────────┘ (both groupers)
                                                                                      │
+                                                           build_machine() — shared by both groupers, calls:
                                                            build_summary_for_machine (findings, per machine)
                                                            build_pm_summary_for_machine (PM, per machine)
                                                                                      │
                                                            MachineSummary.findings: FindingsSummary | None
                                                            MachineSummary.pm_summary: PMSummary | None
                                                                                      │
-                                                           render_html / render_text ──► Graph /sendMail
+                                                render_html/text ──► Graph /sendMail (plant, with CC)
+                                                render_regional_html/text ──► Graph /sendMail (regional, no CC)
 ```
 
-Findings and PM fetch failures each send an admin alert but do **not** abort the digest — machines render without those blocks.
+Findings, PM, and routing-fallback issues each send an admin alert but do **not** abort the run — plant digests render without the missing blocks, and regional digests still send even if some Plant+Department pairs fell back to plant-level routing.
+
+### Routing columns (`grouper.py` / `regional.py` / `routing_check.py`)
+
+Stamped onto every row by Qlik Section 49 from `PlantManagers.xlsx` (via
+Section 7B), resolved at Plant+Department grain with a Plant-only fallback:
+
+| Column | Notes |
+|---|---|
+| `Manager_Email`, `CC_List` | Plant manager routing — unchanged consumer (`group_by_manager`) |
+| `Regional_Manager_Email`, `Regional_Manager_Name` | Regional manager routing — consumed by `group_by_regional_manager` |
+| `Routing_Match_Level` | `'Department'` \| `'Plant'` \| `'None'` — which map resolved the row. Consumed by `find_routing_mismatches()`, not rendered in either email. |
+
+### RegionalDigest schema (`regional.py`)
+
+```python
+@dataclass
+class PlantRollup:
+    plant: str
+    sheets: float
+    machines_impacted: int
+    worst_machine: str | None
+    worst_machine_sheets: float | None
+
+@dataclass
+class DepartmentSection:
+    department: str
+    sheets: float
+    machines_impacted: int
+    plants_count: int
+    top_machines: list[MoverRow]   # grouper.MoverRow, capped to top_n (default 3), sheets DESC
+
+@dataclass
+class RegionalDigest:
+    regional_manager_email: str
+    regional_manager_name: str | None
+    period_start: str
+    total_sheets: float
+    plants_covered: int
+    machines_impacted: int
+    top_driver_name: str | None
+    top_driver_sheets: float | None
+    maint_open: int
+    maint_priority10: int
+    maint_overdue_pm: int
+    plant_rollups: list[PlantRollup]        # sheets DESC
+    departments: list[DepartmentSection]    # sheets DESC
+
+    @property
+    def has_maintenance(self) -> bool: ...
+```
+
+`group_by_regional_manager(df, findings_df=None, pm_df=None, top_n=3)` builds
+each machine via the same `grouper.build_machine()` plant digests use, then
+rolls up by `Plant` and by `Department`. Returns `[]` (with a log message,
+not an exception) when `Regional_Manager_Email` is absent from the CSV — a
+CSV from before the Qlik reload that added it still lets plant digests send.
+Maintenance is a single rolled-up count (open findings, priority-10 count,
+overdue PMs) — no per-machine maintenance detail, unlike the plant digest's
+full Maintenance Report table.
 
 ### MachineWeekSummary.csv schema (`grouper.py`)
 
@@ -195,9 +293,15 @@ SECTION_TO_LEVER_KEYWORDS = {
 - **KPI value formatting (`_format_kpi_value` in `grouper.py`)** — formats `cur_actual` / `bsp_benchmark` strings at grouping time. Rules in priority order: (1) `_PERCENT_LEVERS` → `XX.XX%`; (2) `_TIME_HOURS_LEVERS` (Avg MR Time, Avg Blanket Wash Time, Avg Feeder Trip Time) → multiply by 60, integer, e.g. `"27 Mins"`; (3) `Speed` → integer with comma separator, e.g. `"45,000"`; (4) default → `XX.XX`. Templates render the pre-formatted strings directly — no unit logic in Jinja2.
 - **Renderer uses a module-level `_env`** — Jinja2 environment is created once at import time.
 - **Admin alerts are best-effort** — `send_admin_alert` swallows exceptions so a broken credential does not mask the original error.
-- **`--dry-run` writes to `out/preview/<email>.html`** — safe to run against production config.
-- **`test_without_mail.py`** — fetches all three SharePoint sources, renders previews to `out/test_preview/`, logs findings and PM attachment counts, writes a clickable `_index.html`.
+- **`--dry-run` writes to `out/preview/<email>.html`** (plant) and `out/preview/regional/<email>.html` (regional) — safe to run against production config.
+- **`test_without_mail.py`** — fetches all three SharePoint sources, renders plant previews to `out/test_preview/` and regional previews to `out/test_preview/regional/`, logs findings/PM attachment counts and any routing fallbacks, writes a clickable `_index.html` covering both report types.
+- **`build_machine()` is the single per-row builder** — extracted from `group_by_manager`'s loop so `regional.py` builds `MachineSummary` objects identically; a machine's data never diverges between the plant digest and the regional roll-up that includes it.
+- **Regional digests are a synopsis, not a drill-down** — no per-machine lever bullets, no findings/PM detail per machine. Region KPI tiles → plant roll-up table → per-department top-3 tables (`regional_top_n` in `config.yaml`, default 3) → one maintenance summary line. Detail lives in the plant manager's email; the regional footer says so.
+- **Routing fallback is logged, not silently accepted** — `Routing_Match_Level` on every row tells Python whether Qlik resolved that Plant+Department pair or fell back to a plant-only match. `find_routing_mismatches()` turns any non-`'Department'` rows into one admin alert per run (deduplicated by Plant+Department) so a missing workbook row gets fixed instead of persisting unnoticed. The machine still gets emailed either way — this is visibility, not a blocker.
+- **Regional emails never CC** — plant digests CC via `CC_List`; regional digests always pass `cc_list=None` to `send_mail`.
+- **Brand theme lives in `templates/_theme.j2`** — Jinja `{% set %}` color/font tokens plus shared macros, imported by every template (`{% import '_theme.j2' as t %}`). Change a color once, not per-template. Palette: Green `#006548` (primary), Light Green `#76BC21` (accent), Black `#3D3935` (ink). Streak/warning emphasis uses amber (`#8A5A00` / `#FFF8E8` / `#E0A800`), not red — red directly against the brand green is the hardest color pairing for red-green color vision deficiency, and reads as "error" rather than "trend to watch." Emphasis never rests on color alone (bold weight + explicit text always accompanies a color cue).
+- **Every visual style is inlined, `<style>` is enhancement-only** — Outlook desktop (Word rendering engine) drops most box-model CSS and `border-radius`; Outlook.com ignores `<style>` blocks entirely. Both templates carry the same values as inline `style=` attributes on every element that matters, with a `<head><style>` block layered on top purely for `@media` mobile stacking and clients that honor it. CSS class names from the original template (`overview-tiles`, `tile-value`, `movers-table`, etc.) were kept unchanged so existing tests keep working — new inline styles were added alongside them, not in place of them.
 
 ### Upgrade path
 
-To replace Jinja2 with LLM prose, swap `src/renderer.py` for an Azure OpenAI call. `ManagerDigest` / `MachineSummary` / `LeverSummary` / `FindingsSummary` / `PMSummary` are the stable interface.
+To replace Jinja2 with LLM prose, swap `src/renderer.py` for an Azure OpenAI call. `ManagerDigest` / `MachineSummary` / `LeverSummary` / `FindingsSummary` / `PMSummary` / `RegionalDigest` / `PlantRollup` / `DepartmentSection` are the stable interface.

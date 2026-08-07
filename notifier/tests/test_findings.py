@@ -167,9 +167,12 @@ def test_grouper_without_findings_is_backwards_compatible(summary_df):
 
 
 def test_grouper_machine_without_findings_row_returns_none(summary_df, findings_df):
-    # All 3 machines in the fixture have findings — verify the field is populated
+    # The original 3 machines (Elk Grove x2, Chicago) all have findings rows —
+    # verify the field is populated for them. Dallas/Denver machines added later
+    # for regional-digest tests have no findings rows and correctly stay None.
     digests = group_by_manager(summary_df, findings_df=findings_df)
+    covered_machines = {"Elk Grove / Gluer 01", "Elk Grove / Gluer 02", "Chicago / Flexo 01"}
     for digest in digests:
         for machine in digest.machines:
-            # findings should be non-None for all 3 fixture machines
-            assert machine.findings is not None
+            if machine.plant_wc in covered_machines:
+                assert machine.findings is not None

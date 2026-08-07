@@ -26,7 +26,15 @@ from src.pm_compliance import load_pm_compliance
 from src.freshness import StaleDataError, assert_fresh
 from src.grouper import group_by_manager
 from src.mailer import send_admin_alert, send_mail
-from src.renderer import render_admin_alert, render_html, render_text
+from src.regional import group_by_regional_manager
+from src.renderer import (
+    render_admin_alert,
+    render_html,
+    render_regional_html,
+    render_regional_text,
+    render_text,
+)
+from src.routing_check import find_routing_mismatches
 
 log = logging.getLogger(__name__)
 
@@ -96,14 +104,26 @@ def main(args: argparse.Namespace) -> int:
             send_admin_alert(config, env, "Insight Notifier — PMComplianceDump.xlsx fetch failure", alert_html)
 
     df = pd.read_csv(io.BytesIO(csv_bytes))
-    digests = group_by_manager(df, findings_df=findings_df, pm_df=pm_df)
 
-    if not digests:
-        log.warning("No manager digests to send — MachineWeekSummary.csv may be empty")
+    mismatches = find_routing_mismatches(df)
+    if mismatches:
+        for line in mismatches:
+            log.warning("Routing fallback: %s", line)
+        alert_html = render_admin_alert("Routing fallback", "\n".join(mismatches))
+        send_admin_alert(config, env, "Insight Notifier — plant/department routing fallback", alert_html)
+
+    digests = group_by_manager(df, findings_df=findings_df, pm_df=pm_df)
+    regional_digests = group_by_regional_manager(
+        df, findings_df=findings_df, pm_df=pm_df, top_n=config.get("regional_top_n", 3)
+    )
+
+    if not digests and not regional_digests:
+        log.warning("No digests to send — MachineWeekSummary.csv may be empty")
         return 0
 
-    period_start = digests[0].period_start
+    period_start = digests[0].period_start if digests else regional_digests[0].period_start
     subject = f"{config.get('email_subject_prefix', 'Weekly OEE Insight')} — {period_start}"
+    regional_subject = f"{config.get('regional_subject_prefix', 'Regional OEE Summary')} — {period_start}"
 
     errors: list[str] = []
     for digest in digests:
@@ -126,6 +146,26 @@ def main(args: argparse.Namespace) -> int:
                 log.error("Failed to send to %s: %s", digest.manager_email, exc)
                 errors.append(f"{digest.manager_email}: {exc}")
 
+    for digest in regional_digests:
+        html = render_regional_html(digest, regional_subject)
+        text = render_regional_text(digest, regional_subject)
+        if args.dry_run:
+            _write_preview(digest.regional_manager_email, html, Path("out/preview/regional"))
+        else:
+            try:
+                send_mail(
+                    config=config,
+                    env=env,
+                    to_email=digest.regional_manager_email,
+                    cc_list=None,
+                    subject=regional_subject,
+                    html_body=html,
+                    text_body=text,
+                )
+            except Exception as exc:
+                log.error("Failed to send to %s: %s", digest.regional_manager_email, exc)
+                errors.append(f"{digest.regional_manager_email}: {exc}")
+
     if errors:
         details = "\n".join(errors)
         alert_html = render_admin_alert("Send failure", details)
@@ -133,8 +173,9 @@ def main(args: argparse.Namespace) -> int:
         return 1
 
     log.info(
-        "Done — %d digests %s",
+        "Done — %d plant digest(s) + %d regional digest(s) %s",
         len(digests),
+        len(regional_digests),
         "previewed" if args.dry_run else "sent",
     )
     return 0
