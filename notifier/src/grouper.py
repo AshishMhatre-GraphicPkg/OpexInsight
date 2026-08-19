@@ -8,11 +8,17 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from . import actions
+
 if TYPE_CHECKING:
     from .findings import FindingsSummary
     from .pm_compliance import PMSummary
 
 log = logging.getLogger(__name__)
+
+# V2 manager digest: number of top-impact machines that get a full 3-card
+# (Who/Why/How) treatment; the rest are rolled into a compact "also impacted" list.
+FOCUS_MACHINE_COUNT = 3
 
 # CSV column names (match Qlik STORE output)
 _COL_MANAGER = "Manager_Email"
@@ -45,6 +51,7 @@ _LOWER_IS_BETTER_LEVERS = {
     "Downtime %", "Scrap Loss", "Avg MR Time",
     "Downtime Reason",
     "Avg Blanket Wash Time", "Avg Feeder Trip Time",
+    "Blanket Washes per 10K", "Feeder Trips per 10K",
 }
 
 _TIME_HOURS_LEVERS = {"Avg MR Time", "Avg Blanket Wash Time", "Avg Feeder Trip Time"}
@@ -70,6 +77,34 @@ def _streak_direction(name: str) -> str:
     return "above BSP" if name in _LOWER_IS_BETTER_LEVERS else "below BSP"
 
 
+# Streak_4wk on a Downtime Reason lever is a count of weeks (of the last 4)
+# whose rate exceeded BSP (InsightOpexv1.qvs Section 41B). On every other
+# lever, Streak is a run of consecutive weeks each worse than the week before
+# (InsightOpexv1.qvs:1828-1868, Peek()-based) — not a comparison to BSP and not
+# capped to a fixed window. The two are different measurements; the wording
+# below says only what each one actually supports.
+_BSP_COUNT_STREAK_LEVERS = {"Downtime Reason"}
+
+
+def _streak_phrase(name: str, streak: int, direction: str) -> str:
+    if name in _BSP_COUNT_STREAK_LEVERS:
+        verb = "Above" if direction == "above BSP" else "Below"
+        if streak <= 0:
+            return f"First week {verb.lower()} benchmark in the last 4."
+        if streak >= 4:
+            return f"{verb} benchmark in all 4 of the last 4 weeks."
+        return f"{verb} benchmark in {streak} of the last 4 weeks."
+
+    verb = "Below" if direction == "below BSP" else "Above"
+    if streak <= 0:
+        return f"{verb} benchmark this week — watch next week."
+    if streak == 1:
+        return "Trending worse — first week worse than last."
+    if streak >= 4:
+        return "Trending worse for 4+ weeks straight — needs attention."
+    return f"Trending worse for {streak} weeks straight — needs attention."
+
+
 @dataclass
 class LeverSummary:
     name: str
@@ -81,6 +116,9 @@ class LeverSummary:
     cur_actual: str
     bsp_benchmark: str
     streak_direction: str
+    streak_phrase: str = ""
+    action: str = ""
+    action_is_generic: bool = False
 
 
 @dataclass
@@ -119,6 +157,7 @@ class OverviewSummary:
     maint_open: int
     maint_priority10: int
     maint_overdue_pm: int
+    maint_missing_wo: int = 0
 
     @property
     def has_maintenance(self) -> bool:
@@ -132,6 +171,20 @@ class ManagerDigest:
     period_start: str
     machines: list[MachineSummary] = field(default_factory=list)
     overview: OverviewSummary | None = None
+
+    @property
+    def focus_machines(self) -> list[MachineSummary]:
+        """Top FOCUS_MACHINE_COUNT impacted machines — get the full 3-card treatment.
+
+        `machines` is already sorted Total_Sheet_Impact DESC (group_by_manager),
+        so this is a slice, not a re-sort or re-selection.
+        """
+        return [m for m in self.machines if m.total_sheet_impact > 0][:FOCUS_MACHINE_COUNT]
+
+    @property
+    def other_machines(self) -> list[MachineSummary]:
+        """Remaining impacted machines beyond the focus set — name + sheets only."""
+        return [m for m in self.machines if m.total_sheet_impact > 0][FOCUS_MACHINE_COUNT:]
 
 
 def _build_overview(machines: list) -> OverviewSummary:
@@ -165,6 +218,7 @@ def _build_overview(machines: list) -> OverviewSummary:
     maint_open = sum(m.findings.total_open for m in machines if m.findings)
     maint_p10 = sum(m.findings.high_priority_count for m in machines if m.findings)
     maint_pm = sum(m.pm_summary.total_overdue for m in machines if m.pm_summary)
+    maint_missing_wo = sum(m.findings.total_missing_wo for m in machines if m.findings)
 
     return OverviewSummary(
         total_sheets=total_sheets,
@@ -175,6 +229,7 @@ def _build_overview(machines: list) -> OverviewSummary:
         maint_open=maint_open,
         maint_priority10=maint_p10,
         maint_overdue_pm=maint_pm,
+        maint_missing_wo=maint_missing_wo,
     )
 
 
@@ -191,17 +246,24 @@ def _build_levers(row: pd.Series) -> list[LeverSummary]:
         if name is None:
             break
         lever_name = str(name).strip()
+        reasons = _nan_to_none(row.get(f"Lever_{i}_Reasons"))
+        streak = int(row.get(f"Lever_{i}_Streak", 0) or 0)
+        direction = _streak_direction(lever_name)
+        guidance = actions.lookup_action(reasons, lever_name)
         levers.append(
             LeverSummary(
                 name=lever_name,
-                reasons=_nan_to_none(row.get(f"Lever_{i}_Reasons")),
+                reasons=reasons,
                 sheets=float(row.get(f"Lever_{i}_Sheets", 0) or 0),
                 gap_pct=float(row.get(f"Lever_{i}_Gap_Pct", 0) or 0),
-                streak=int(row.get(f"Lever_{i}_Streak", 0) or 0),
+                streak=streak,
                 parent_outcome=str(row.get(f"Lever_{i}_Parent_Outcome", "") or ""),
                 cur_actual=_format_kpi_value(lever_name, row.get(f"Lever_{i}_Cur_Actual")),
                 bsp_benchmark=_format_kpi_value(lever_name, row.get(f"Lever_{i}_BSP_Benchmark")),
-                streak_direction=_streak_direction(lever_name),
+                streak_direction=direction,
+                streak_phrase=_streak_phrase(lever_name, streak, direction),
+                action=guidance.action,
+                action_is_generic=guidance.is_generic,
             )
         )
     return levers

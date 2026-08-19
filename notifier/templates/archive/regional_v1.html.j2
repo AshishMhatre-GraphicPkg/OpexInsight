@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  /* Progressive enhancement only — see email.html.j2 for the Outlook note.
+     Every element below also carries an inline style= attribute. */
+  body { font-family: 'Segoe UI', Calibri, Arial, sans-serif; font-size: 14px; color: #3D3935; margin: 0; padding: 0; background-color: #F4F8F3; }
+  .content-wrap { max-width: 640px; margin: 0 auto; background-color: #FFFFFF; }
+  h2 { color: #FFFFFF; margin: 0; font-size: 20px; }
+  .subtitle { color: #76BC21; font-size: 13px; margin-top: 4px; }
+  .overview-tiles { border-collapse: separate; border-spacing: 6px 0; margin: 16px 0; width: 100%; }
+  .tile { background: #F4F8F3; border-top: 3px solid #76BC21; padding: 12px 14px; text-align: center; }
+  .tile-value { font-size: 1.3em; font-weight: bold; color: #006548; }
+  .tile-label { font-size: 0.72em; color: #6B6560; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .maint-line { font-size: 0.9em; color: #8A5A00; background: #FFF8E8; border-left: 3px solid #E0A800; padding: 8px 12px; margin-top: 8px; }
+  .section-heading { background-color: #E7F0E9; color: #006548; font-weight: 700; font-size: 14px; padding: 8px 14px; margin-top: 22px; }
+  .rollup-table, .dept-table { border-collapse: collapse; width: 100%; font-size: 0.93em; margin-top: 10px; margin-bottom: 12px; }
+  .rollup-table th, .dept-table th { background: #E7F0E9; color: #006548; text-align: left; padding: 6px 10px; }
+  .rollup-table td, .dept-table td { padding: 5px 10px; border-bottom: 1px solid #DDE3DE; }
+  .num { text-align: right; }
+  .dept-summary { font-size: 0.9em; color: #6B6560; margin: 6px 0 0; }
+  .footer { margin-top: 32px; font-size: 12px; color: #6B6560; border-top: 1px solid #DDE3DE; padding-top: 8px; }
+  @media (max-width: 620px) {
+    .overview-tiles, .overview-tiles tbody, .overview-tiles tr, .overview-tiles td { display: block; width: 100% !important; }
+    .tile { margin-bottom: 8px; }
+  }
+</style>
+</head>
+<body style="font-family:'Segoe UI', Calibri, Arial, sans-serif; font-size:14px; color:#3D3935; margin:0; padding:0; background-color:#F4F8F3;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F4F8F3;">
+<tr><td align="center">
+<table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" class="content-wrap" style="max-width:640px; width:100%; background-color:#FFFFFF;">
+<tr>
+  <td style="background-color:#004D36; padding:20px 24px;">
+    <h2 style="color:#FFFFFF; margin:0; font-size:20px; line-height:1.3; font-family:'Segoe UI', Calibri, Arial, sans-serif;">{{ subject }}</h2>
+    {% if digest.regional_manager_name %}
+    <div class="subtitle" style="color:#76BC21; font-size:13px; margin-top:4px;">{{ digest.regional_manager_name }} — Region Summary</div>
+    {% endif %}
+  </td>
+</tr>
+<tr>
+  <td style="padding:20px 24px 24px;">
+
+<table class="overview-tiles" style="border-collapse:separate; border-spacing:6px 0; margin:16px 0; width:100%;">
+  <tr>
+    <td class="tile" style="background-color:#F4F8F3; border-top:3px solid #76BC21; padding:12px 14px; text-align:center;">
+      <div class="tile-value" style="font-size:1.3em; font-weight:bold; color:#006548; font-variant-numeric:tabular-nums;" title="{{ digest.total_sheets | comma_int }}">{{ digest.total_sheets | sheets_short }}</div>
+      <div class="tile-label" style="font-size:0.72em; color:#6B6560; margin-top:3px; text-transform:uppercase; letter-spacing:0.04em;">Sheets lost vs BSP</div>
+    </td>
+    <td class="tile" style="background-color:#F4F8F3; border-top:3px solid #76BC21; padding:12px 14px; text-align:center;">
+      <div class="tile-value" style="font-size:1.3em; font-weight:bold; color:#006548;">{{ digest.plants_covered }}</div>
+      <div class="tile-label" style="font-size:0.72em; color:#6B6560; margin-top:3px; text-transform:uppercase; letter-spacing:0.04em;">Plants covered</div>
+    </td>
+    <td class="tile" style="background-color:#F4F8F3; border-top:3px solid #76BC21; padding:12px 14px; text-align:center;">
+      <div class="tile-value" style="font-size:1.3em; font-weight:bold; color:#006548;">{{ digest.machines_impacted }}</div>
+      <div class="tile-label" style="font-size:0.72em; color:#6B6560; margin-top:3px; text-transform:uppercase; letter-spacing:0.04em;">Machines impacted</div>
+    </td>
+    {% if digest.top_driver_name %}
+    <td class="tile" style="background-color:#F4F8F3; border-top:3px solid #76BC21; padding:12px 14px; text-align:center;">
+      <div class="tile-value" style="font-size:1.3em; font-weight:bold; color:#006548;">{{ digest.top_driver_name }}</div>
+      <div class="tile-label" style="font-size:0.72em; color:#6B6560; margin-top:3px; text-transform:uppercase; letter-spacing:0.04em;">Top driver ({{ digest.top_driver_sheets | comma_int }} sheets)</div>
+    </td>
+    {% endif %}
+  </tr>
+</table>
+
+{% if digest.has_maintenance %}
+<p class="maint-line" style="font-size:0.9em; color:#8A5A00; background:#FFF8E8; border-left:3px solid #E0A800; padding:8px 12px; margin-top:8px;">
+  Maintenance across the region: <strong>{{ digest.maint_open }}</strong> open {{ digest.maint_open | pluralize('finding') }}
+  {%- if digest.maint_priority10 %} (<strong>{{ digest.maint_priority10 }}</strong> priority-10){%- endif %},
+  <strong>{{ digest.maint_overdue_pm }}</strong> {{ digest.maint_overdue_pm | pluralize('PM') }} overdue.
+</p>
+{% endif %}
+
+{% if digest.plant_rollups %}
+<div class="section-heading" style="background-color:#E7F0E9; color:#006548; font-weight:700; font-size:14px; padding:8px 14px; margin-top:22px;">Plants</div>
+<table class="rollup-table" style="border-collapse:collapse; width:100%; font-size:0.93em; margin-top:10px; margin-bottom:12px;">
+  <thead>
+    <tr>
+      <th style="background:#E7F0E9; color:#006548; text-align:left; padding:6px 10px;">Plant</th>
+      <th class="num" style="background:#E7F0E9; color:#006548; text-align:right; padding:6px 10px;">Sheets Lost ▼</th>
+      <th class="num" style="background:#E7F0E9; color:#006548; text-align:right; padding:6px 10px;">Machines Impacted</th>
+      <th style="background:#E7F0E9; color:#006548; text-align:left; padding:6px 10px;">Worst Machine</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in digest.plant_rollups %}
+    <tr {% if loop.index is even %}style="background-color:#F4F8F3;"{% endif %}>
+      <td style="padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ p.plant }}</td>
+      <td class="num" style="text-align:right; padding:5px 10px; border-bottom:1px solid #DDE3DE; font-variant-numeric:tabular-nums;">{{ p.sheets | comma_int }}</td>
+      <td class="num" style="text-align:right; padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ p.machines_impacted }}</td>
+      <td style="padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ p.worst_machine if p.worst_machine else '&mdash;' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% for d in digest.departments %}
+<div class="section-heading" style="background-color:#E7F0E9; color:#006548; font-weight:700; font-size:14px; padding:8px 14px; margin-top:22px;">{{ d.department }}</div>
+<p class="dept-summary" style="font-size:0.9em; color:#6B6560; margin:6px 0 0;">
+  {{ d.sheets | comma_int }} sheets lost &middot; {{ d.machines_impacted }} {{ d.machines_impacted | pluralize('machine') }} impacted &middot; {{ d.plants_count }} {{ d.plants_count | pluralize('plant') }}
+</p>
+{% if d.top_machines %}
+<table class="dept-table" style="border-collapse:collapse; width:100%; font-size:0.93em; margin-top:10px; margin-bottom:12px;">
+  <thead>
+    <tr>
+      <th style="background:#E7F0E9; color:#006548; text-align:left; padding:6px 10px;">Machine</th>
+      <th class="num" style="background:#E7F0E9; color:#006548; text-align:right; padding:6px 10px;">Cur OEE</th>
+      <th class="num" style="background:#E7F0E9; color:#006548; text-align:right; padding:6px 10px;">BSP OEE</th>
+      <th class="num" style="background:#E7F0E9; color:#006548; text-align:right; padding:6px 10px;">Sheets Lost ▼</th>
+      <th style="background:#E7F0E9; color:#006548; text-align:left; padding:6px 10px;">Top Lever</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in d.top_machines %}
+    <tr {% if loop.index is even %}style="background-color:#F4F8F3;"{% endif %}>
+      <td style="padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ row.plant_wc }}</td>
+      <td class="num" style="text-align:right; padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ row.cur_oee | percent if row.cur_oee is not none else '&mdash;' }}</td>
+      <td class="num" style="text-align:right; padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ row.bsp_oee | percent if row.bsp_oee is not none else '&mdash;' }}</td>
+      <td class="num" style="text-align:right; padding:5px 10px; border-bottom:1px solid #DDE3DE; font-variant-numeric:tabular-nums;">{{ row.total_sheet_impact | comma_int }}</td>
+      <td style="padding:5px 10px; border-bottom:1px solid #DDE3DE;">{{ row.top_lever if row.top_lever else '&mdash;' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endfor %}
+
+<div class="footer" style="margin-top:32px; font-size:12px; color:#6B6560; border-top:1px solid #DDE3DE; padding-top:8px;">
+  Generated automatically by the Folding Carton Actionable Intelligence Platform.
+  For per-machine detail, see the plant manager digest for each plant in this region.
+  Do not reply to this email.
+</div>
+
+  </td>
+</tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>

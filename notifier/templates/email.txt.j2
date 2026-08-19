@@ -1,80 +1,50 @@
+{# Manager digest V2 (text). V1 archived at templates/archive/manager_v1.txt.j2. #}
 {{ subject }}
 {{ "=" * 60 }}
 
 {% if digest.overview %}
 {% set ov = digest.overview %}
-{{ "-" * 60 }}
   Sheets lost vs BSP : {{ ov.total_sheets | comma_int }}
-  Machines impacted  : {{ ov.machines_impacted }}
 {% if ov.top_driver_name %}
   Top driver         : {{ ov.top_driver_name }} ({{ ov.top_driver_sheets | comma_int }} sheets)
-{% endif %}
-
-{% if ov.top_movers %}
-Top movers (sheets lost vs BSP OEE, descending):
-{% set col1 = 32 %}
-{{ "Machine".ljust(col1) }}| Cur OEE | BSP OEE | Sheets Lost  | Top Lever
-{{ "-" * col1 }}|---------|---------|--------------|------------------
-{% for row in ov.top_movers %}
-{{ row.plant_wc[:col1 - 1].ljust(col1) }}| {{ "%7s" | format(row.cur_oee | percent if row.cur_oee is not none else '-') }} | {{ "%7s" | format(row.bsp_oee | percent if row.bsp_oee is not none else '-') }} | {{ "%12s" | format(row.total_sheet_impact | comma_int) }} | {{ row.top_lever if row.top_lever else '-' }}
-{% endfor %}
-{% endif %}
-{% if ov.has_maintenance %}
-Maintenance: {{ ov.maint_open }} open {{ ov.maint_open | pluralize('finding') }}{% if ov.maint_priority10 %} ({{ ov.maint_priority10 }} priority-10){% endif %}, {{ ov.maint_overdue_pm }} {{ ov.maint_overdue_pm | pluralize('PM') }} overdue — see Maintenance Report below.
 {% endif %}
 {{ "=" * 60 }}
 
 {% endif %}
-{% set maint_machines = digest.machines | selectattr('findings') | list %}
-{% set pm_machines = digest.machines | selectattr('pm_summary') | list %}
-{% set all_maint_machines = (maint_machines + pm_machines) | unique(attribute='plant_wc') | list %}
-{% if all_maint_machines %}
+{% if digest.focus_machines %}
+WHERE TO FOCUS THIS WEEK
+{{ "-" * 60 }}
+{% for m in digest.focus_machines %}
+{% set l = m.levers[0] if m.levers else none %}
+{{ m.plant_wc }} ({{ m.department }})
+{% if l %}
+  WHY:        {{ l.reasons if l.reasons else l.name }}
+{% if m.outcome_1_cur_actual is not none and m.outcome_1_bsp_benchmark is not none %}
+              OEE {{ m.outcome_1_cur_actual | percent }} vs BSP {{ m.outcome_1_bsp_benchmark | percent }}
+{% endif %}
+              {{ m.total_sheet_impact | comma_int }} sheets lost
+              {{ l.streak_phrase }}
+  HOW TO FIX: {{ l.action }}
+{% if m.findings and m.findings.corroborated_sections %}
+              ! Open Graphic Care {{ m.findings.total_open | pluralize('finding') }} on {{ m.findings.corroborated_sections | join(', ') }} may already cover this — check before scheduling new work.
+{% endif %}
+{% else %}
+  {{ m.total_sheet_impact | comma_int }} sheets lost vs BSP this week — no single dominant lever.
+{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if digest.other_machines %}
+Also impacted: {% for m in digest.other_machines %}{{ m.plant_wc }} ({{ m.total_sheet_impact | comma_int }} sheets){% if not loop.last %}, {% endif %}{% endfor %}
+
+{% endif %}
+{% if digest.overview and digest.overview.has_maintenance %}
+{% set ov = digest.overview %}
 MAINTENANCE REPORT
 {{ "-" * 60 }}
-{% set col1 = 28 %}
-{{ "Machine".ljust(col1) }}| GC Open | GC Missing WO | Overdue PM Procedures
-{{ "-" * col1 }}|---------|---------------|----------------------
-{% for m in all_maint_machines %}
-{{ m.plant_wc[:col1 - 1].ljust(col1) }}|    {{ "%3d" | format(m.findings.total_open if m.findings else 0) }}    |         {{ "%3d" | format(m.findings.total_missing_wo if m.findings else 0) }}    |    {{ "%3d" | format(m.pm_summary.total_overdue if m.pm_summary else 0) }}
-{% endfor %}
-{{ "-" * col1 }}|---------|---------------|----------------------
-{{ "TOTAL".ljust(col1) }}|    {{ "%3d" | format(all_maint_machines | selectattr('findings') | map(attribute='findings.total_open') | sum) }}    |         {{ "%3d" | format(all_maint_machines | selectattr('findings') | map(attribute='findings.total_missing_wo') | sum) }}    |    {{ "%3d" | format(all_maint_machines | selectattr('pm_summary') | map(attribute='pm_summary.total_overdue') | sum) }}
+{{ ov.maint_open }} open Graphic Care {{ ov.maint_open | pluralize('Finding') }}{% if ov.maint_priority10 %} ({{ ov.maint_priority10 }} priority-10){% endif %}, {{ ov.maint_missing_wo }} Missing Work {{ ov.maint_missing_wo | pluralize('Order') }}, {{ ov.maint_overdue_pm }} critically overdue PM {{ ov.maint_overdue_pm | pluralize('procedure') }}.
+"Critically overdue" means a PM procedure that is significantly overdue and has exceeded its allowable completion window.
 
 {% endif %}
-{% for m in digest.machines %}
-{{ m.plant_wc }} — {{ m.department }}
-{{ "-" * 40 }}
-{{ m.plant_wc }} lost {{ m.total_sheet_impact | comma_int }} sheets of OEE Impact this week.
-
-{% if m.levers %}
-Top levers to address:
-{% for l in m.levers %}
-  {{ loop.index }}. {{ l.name }}{% if l.reasons %} — {{ l.reasons }}{% endif %}
-     {{ l.parent_outcome }} | {{ l.sheets | comma_int }} sheets{%- if l.cur_actual %} | actual {{ l.cur_actual }} vs BSP {{ l.bsp_benchmark }}{% endif %} | gap {{ "%.1f" | format(l.gap_pct) }}% | streak {{ l.streak }}/4 {{ l.streak_direction }}
-{% endfor %}
-{% endif %}
-
-{% if m.findings %}
-Graphic Care Findings:
-  Open: {{ m.findings.total_open }}  |  Missing WO: {{ m.findings.total_missing_wo }}  |  Overdue {{ m.findings.total_overdue | pluralize('WO') }}: {{ m.findings.total_overdue }}{% if m.findings.high_priority_count %}  |  Priority-10: {{ m.findings.high_priority_count }}{% endif %}
-
-{% for s in m.findings.by_section %}
-  - {{ s.section }}: {{ s.open_count }} Open{% if s.missing_wo_count %}, {{ s.missing_wo_count }} Missing WO{% endif %}{% if s.overdue_count %}, {{ s.overdue_count }} Overdue{% endif %}{% if s.is_corroborated %} [linked to active lever]{% endif %}
-{% endfor %}
-{% if m.findings.corroborated_sections %}
-  Sections marked [linked to active lever] may be contributing to the OEE gaps above.
-{% endif %}
-{% endif %}
-
-{% if m.pm_summary %}
---- CRITICALLY OVERDUE PREVENTIVE MAINTENANCE ---
-{% for row in m.pm_summary.by_core_pm %}
-  {{ row.core_pm }}: {{ row.overdue_count }} overdue
-{% endfor %}
-  TOTAL: {{ m.pm_summary.total_overdue }}
-{% endif %}
-
-{% endfor %}
-
 ---
-Generated automatically. Do not reply.
+Generated automatically by the Folding Carton Actionable Intelligence Platform. Do not reply.

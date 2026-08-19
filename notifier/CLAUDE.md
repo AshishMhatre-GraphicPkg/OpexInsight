@@ -62,15 +62,20 @@ src/
   routing_check.py       # find_routing_mismatches(df) → list[str], from Routing_Match_Level
   findings.py            # Pure: load_findings(), build_summary_for_machine() → FindingsSummary | None
   pm_compliance.py       # Pure: load_pm_compliance(), build_pm_summary_for_machine() → PMSummary | None
+  actions.py             # Pure: load_action_lookup(), lookup_action() → ActionGuidance (see "Manager digest V2" below)
+  data/Reason_Category_Action_Lookup.xlsx  # Static reference table actions.py loads (shipped as package data)
   renderer.py            # Jinja2 wrappers: render_html/text, render_regional_html/text, render_admin_alert
   mailer.py              # Graph API: _post_with_retry (3 attempts, exp backoff), send_mail, send_admin_alert
   logging_setup.py       # configure() called once at startup
 templates/
-  _theme.j2               # Brand color/type tokens + shared Jinja macros — single source of truth for styling
-  email.html.j2            # Per-manager HTML digest; findings block then PM block per machine
-  email.txt.j2              # Plain-text fallback; includes findings and PM blocks
-  regional.html.j2, regional.txt.j2  # Per-region synopsis: KPI tiles, plant roll-up, top-3-per-department tables
+  _theme.j2               # Brand color/type tokens + shared Jinja macros. Imported by email.html.j2 (V2) via
+                           # {% import '_theme.j2' as t %}; regional.html.j2 still hardcodes hex inline (not yet migrated).
+  email.html.j2            # Per-manager HTML digest — V2: top-3-by-impact machines as Who/Why/How cards, rest
+                            # rolled into one line, maintenance shown as plant-wide totals. See "Manager digest V2" below.
+  email.txt.j2              # Plain-text mirror of email.html.j2
+  regional.html.j2, regional.txt.j2  # Per-region synopsis: KPI tiles, plant roll-up, top-3-per-department tables (V1 design, unchanged)
   admin_alert.html.j2
+  archive/                # Frozen pre-redesign templates kept for reference/rollback — see archive/README.md
 tests/
   fixtures/sample_summary.csv            # 6 machines / 4 plant managers / 2 regional managers (see below)
   fixtures/sample_findings.csv           # 7 rows, 3 machines — Open/Missing WO/overdue/corroborated mix
@@ -79,6 +84,7 @@ tests/
   test_regional.py        # Unit tests for regional grouping + routing mismatch detection (no network)
   test_findings.py        # Unit tests for findings module (no network)
   test_pm_compliance.py   # Unit tests for pm_compliance module (no network)
+  test_actions.py         # Unit tests for the action lookup module (no network)
   test_renderer.py        # Assertion-style template tests, plant + regional (no network, no snapshots)
   test_freshness.py
 config.yaml   # sharepoint_site_id, sharepoint_file_path, sharepoint_findings_path, sharepoint_pm_path,
@@ -289,7 +295,7 @@ SECTION_TO_LEVER_KEYWORDS = {
 - **Summary clause** — `email.html.j2` and `email.txt.j2` render "driven primarily by **\<driver_parent\>** (X sheets)" when `m.driver_parent` is non-null; the clause is omitted entirely otherwise. `Driver_Parent_Name` is only set when `Downtime %` drove the week.
 - **Findings and PM failures are non-fatal** — each catches exceptions, sends an admin alert, and continues the digest without that block. Pattern reuses `send_admin_alert` at `mailer.py:85`.
 - **PM join uses `WC Object ID` only** — Plant is excluded because PMComplianceDump stores it as a short int (`8`) while MachineWeekSummary uses zero-padded strings (`0008`). `WC Object ID` is unique across plants.
-- **PM block placement** — amber table rendered immediately below the Findings block within each per-machine card; suppressed entirely when `pm_summary is None`.
+- **PM block placement** — in the V1 manager template (archived), an amber table rendered immediately below the Findings block within each per-machine card, suppressed when `pm_summary is None`. In V2, per-machine PM/findings detail is gone from the manager digest — `pm_summary` / `findings` still populate on every `MachineSummary` (used for the plant-wide maintenance totals and for the Card 3 corroboration note) but are no longer rendered per machine. `regional.py`'s regional digest never rendered per-machine PM detail either way.
 - **KPI value formatting (`_format_kpi_value` in `grouper.py`)** — formats `cur_actual` / `bsp_benchmark` strings at grouping time. Rules in priority order: (1) `_PERCENT_LEVERS` → `XX.XX%`; (2) `_TIME_HOURS_LEVERS` (Avg MR Time, Avg Blanket Wash Time, Avg Feeder Trip Time) → multiply by 60, integer, e.g. `"27 Mins"`; (3) `Speed` → integer with comma separator, e.g. `"45,000"`; (4) default → `XX.XX`. Templates render the pre-formatted strings directly — no unit logic in Jinja2.
 - **Renderer uses a module-level `_env`** — Jinja2 environment is created once at import time.
 - **Admin alerts are best-effort** — `send_admin_alert` swallows exceptions so a broken credential does not mask the original error.
@@ -299,8 +305,71 @@ SECTION_TO_LEVER_KEYWORDS = {
 - **Regional digests are a synopsis, not a drill-down** — no per-machine lever bullets, no findings/PM detail per machine. Region KPI tiles → plant roll-up table → per-department top-3 tables (`regional_top_n` in `config.yaml`, default 3) → one maintenance summary line. Detail lives in the plant manager's email; the regional footer says so.
 - **Routing fallback is logged, not silently accepted** — `Routing_Match_Level` on every row tells Python whether Qlik resolved that Plant+Department pair or fell back to a plant-only match. `find_routing_mismatches()` turns any non-`'Department'` rows into one admin alert per run (deduplicated by Plant+Department) so a missing workbook row gets fixed instead of persisting unnoticed. The machine still gets emailed either way — this is visibility, not a blocker.
 - **Regional emails never CC** — plant digests CC via `CC_List`; regional digests always pass `cc_list=None` to `send_mail`.
-- **Brand theme lives in `templates/_theme.j2`** — Jinja `{% set %}` color/font tokens plus shared macros, imported by every template (`{% import '_theme.j2' as t %}`). Change a color once, not per-template. Palette: Green `#006548` (primary), Light Green `#76BC21` (accent), Black `#3D3935` (ink). Streak/warning emphasis uses amber (`#8A5A00` / `#FFF8E8` / `#E0A800`), not red — red directly against the brand green is the hardest color pairing for red-green color vision deficiency, and reads as "error" rather than "trend to watch." Emphasis never rests on color alone (bold weight + explicit text always accompanies a color cue).
-- **Every visual style is inlined, `<style>` is enhancement-only** — Outlook desktop (Word rendering engine) drops most box-model CSS and `border-radius`; Outlook.com ignores `<style>` blocks entirely. Both templates carry the same values as inline `style=` attributes on every element that matters, with a `<head><style>` block layered on top purely for `@media` mobile stacking and clients that honor it. CSS class names from the original template (`overview-tiles`, `tile-value`, `movers-table`, etc.) were kept unchanged so existing tests keep working — new inline styles were added alongside them, not in place of them.
+- **Brand theme lives in `templates/_theme.j2`** — Jinja `{% set %}` color/font tokens plus shared macros. `email.html.j2` (the V2 manager digest) imports it (`{% import '_theme.j2' as t %}`) and uses its macros/tokens for inline styles; `regional.html.j2` and the archived V1 templates still hardcode the same hex values inline rather than importing it — a pre-existing gap this redesign did not close outside the manager template. Palette: Green `#006548` (primary), Light Green `#76BC21` (accent), Black `#3D3935` (ink). Streak/warning emphasis uses amber (`#8A5A00` / `#FFF8E8` / `#E0A800`), not red — red directly against the brand green is the hardest color pairing for red-green color vision deficiency, and reads as "error" rather than "trend to watch." Emphasis never rests on color alone (bold weight + explicit text always accompanies a color cue).
+- **Every visual style is inlined, `<style>` is enhancement-only** — Outlook desktop (Word rendering engine) drops most box-model CSS and `border-radius`; Outlook.com ignores `<style>` blocks entirely. Every template carries the same values as inline `style=` attributes on every element that matters, with a `<head><style>` block layered on top purely for `@media` mobile stacking and clients that honor it.
+
+### Manager digest V2 (`email.html.j2` / `email.txt.j2`)
+
+Redesigned to cut data fatigue — one page for most managers, never more than
+two. V1 (3 KPI tiles, a 5-column movers table, a 4-column maintenance table,
+and a per-machine card with up to 5 lever bullets + full findings/PM detail)
+is archived at `templates/archive/manager_v1.{html,txt}.j2`; see
+`templates/archive/README.md` to roll back. **No calculation, threshold,
+ranking, or machine/lever-selection logic changed** — `grouper.py` still
+computes everything; V2 only changes how much of it the template shows.
+
+- **Two KPI tiles, not three** — "Machines impacted" was dropped. "Sheets
+  lost vs BSP" and "Top driver" remain (`OverviewSummary`, unchanged fields).
+- **`ManagerDigest.focus_machines`** (top `FOCUS_MACHINE_COUNT = 3` machines
+  by `Total_Sheet_Impact`, already sorted DESC — a slice, not a re-sort) get
+  a three-column Who/Why/How-to-Fix card. **`ManagerDigest.other_machines`**
+  (the remainder with impact > 0) collapse into one "Also impacted: name
+  (sheets), name (sheets)…" line. Only `levers[0]` (the top lever) is shown
+  per focus machine — levers 2–5 are still on `MachineSummary.levers` (used
+  by `regional.py` and available for a future drill-down) but not rendered.
+- **Card 3 (How to Fix) action text comes from `src/actions.py`** —
+  `lookup_action(lever.reasons or lever.name, ...)` against
+  `src/data/Reason_Category_Action_Lookup.xlsx` ("Reason Lookup" sheet,
+  key = `Lever / Reason`, action = `How the Plant Team Can Help`). Loaded
+  once via `lru_cache`; any load/lookup failure degrades to a generic
+  fallback sentence rather than raising, because `build_machine()` is shared
+  with `regional.py` — an exception here must not break the regional digest
+  too. ~26% of the lookup's rows carry a "not yet mapped" placeholder; those
+  are detected by prefix and swapped for the same generic fallback rather
+  than rendered verbatim (the real text is aimed at the lookup's maintainer,
+  not the plant manager). `actions.log_unmapped_summary()` logs a per-run
+  count of generic-fallback hits so the lookup can be improved over time.
+  When a machine's findings are corroborated with its top lever
+  (`FindingsSummary.corroborated_sections`, unchanged logic from
+  `findings.py`), Card 3 adds an amber note pointing at the open Graphic
+  Care finding instead of duplicating a separate findings block.
+- **`LeverSummary.streak_phrase`** replaces the old literal `"{{ streak }}/4
+  weeks {{ direction }}"` wording, which was wrong for every lever except
+  Downtime Reason. `Streak_4wk` means two different things depending on the
+  lever (see `InsightOpexv1.qvs:1828-1868` vs Section 41B):
+  - **Downtime Reason** — count of the last 4 weeks whose rate exceeded BSP.
+    `_streak_phrase` renders "Above/Below benchmark in N of the last 4
+    weeks."
+  - **Every other lever** (Speed, Downtime %, Scrap Loss, Avg MR Time, Avg
+    Blanket Wash Time, Avg Feeder Trip Time) — a `Peek()`-based run of
+    *consecutive weeks each worse than the week before*, not a comparison to
+    BSP and not capped to a 4-week window. `_streak_phrase` renders
+    "Below/Above benchmark this week — watch next week." (streak 0),
+    "Trending worse — first week worse than last." (streak 1), or "Trending
+    worse for N weeks straight — needs attention." (streak 2+, capped at
+    "4+" for display). The calculation (`Streak` value itself) is unchanged;
+    only the English describing it was corrected.
+- **Maintenance is one plant-wide summary line**, not a per-machine table:
+  open Graphic Care Findings, Missing Work Orders (`OverviewSummary.maint_missing_wo`,
+  new field, same `FindingsSummary.total_missing_wo` sum other maintenance
+  totals already used), and critically-overdue PM procedures, plus one
+  plain-English sentence. "Critically overdue" is still `Urgency == 1` from
+  `pm_compliance.py` (documented upstream as "3+ weeks past Allowed Days") —
+  there is no "1.5× allowed days" rule anywhere in this codebase; the plain
+  English describes the real `Urgency` rule, not an invented one. Suppressed
+  entirely when `OverviewSummary.has_maintenance` is false.
+- **Regional digests (`regional.*.j2`) are unchanged** — same V1 design as
+  before. A regional V2 redesign, if wanted, is future work.
 
 ### Upgrade path
 

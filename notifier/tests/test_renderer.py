@@ -53,24 +53,25 @@ def test_html_contains_outcome_name(digest_a):
 
 
 def test_html_contains_lever_reason(digest_a):
+    # V2 "Why" card heads with the top lever's reason
     html = render_html(digest_a, "Test Subject")
     assert "Motor Fault" in html
 
 
-def test_html_streak_highlighted(digest_a):
+def test_html_streak_phrase_bsp_count_for_downtime_reason(digest_a):
+    # Gluer 01's top lever is Downtime Reason, streak=3 — BSP-count wording
     html = render_html(digest_a, "Test Subject")
-    # Lever 1 on machine 1 has streak=3 — should render streak info
-    assert "3/4" in html
+    assert "Above benchmark in 3 of the last 4 weeks." in html
 
 
-def test_html_no_streak_when_zero(digest_b):
-    # Chicago / Flexo 01 lever 1 (Speed) has streak=2, lever 2 has streak=0
+def test_html_streak_phrase_consecutive_weeks_for_main_kpi(digest_b):
+    # Chicago / Flexo 01's top lever is Speed, streak=2 — consecutive-worse-weeks wording
     html = render_html(digest_b, "Test Subject")
-    assert "2/4" in html
+    assert "Trending worse for 2 weeks straight — needs attention." in html
 
 
 def test_html_no_driven_clause_anywhere(digest_a):
-    # "driven primarily by" clause removed entirely
+    # "driven primarily by" clause removed entirely (V1 and V2 both)
     html = render_html(digest_a, "Test Subject")
     assert "driven primarily by" not in html
 
@@ -95,45 +96,32 @@ def test_html_subject_in_output(digest_a):
     assert "2026-04-21" in html
 
 
-def test_html_lever_shows_actual_vs_bsp(digest_a):
+def test_html_action_present_for_top_lever(digest_a):
+    # Card 3 (How to fix) always has action text, even on a lookup miss
+    # ("Motor Fault" is not a real reason key, so this exercises the generic fallback)
     html = render_html(digest_a, "Test Subject")
-    # Downtime Reason on Gluer 01: actual 32.00% vs BSP 14.00%
-    assert "actual 32.00% vs BSP 14.00%" in html
+    assert "Review this event with the operator and maintenance" in html
 
 
-def test_html_streak_uses_above_bsp_for_lower_is_better(digest_a):
-    html = render_html(digest_a, "Test Subject")
-    # Downtime Reason streak=3 — lower-is-better → "above BSP"
-    assert "3/4 weeks above BSP" in html
+def test_html_action_present_for_real_lookup_key():
+    # Speed is a real key in the action lookup — exercises the hit path
+    df = pd.read_csv(FIXTURE)
+    digests = group_by_manager(df)
+    b = next(d for d in digests if d.manager_email == "manager.b@company.com")
+    html = render_html(b, "Test Subject")
+    assert "Compare actual run speed to the machine" in html
 
 
-def test_html_streak_uses_below_bsp_for_higher_is_better(digest_b):
-    html = render_html(digest_b, "Test Subject")
-    # Speed lever streak=2 — higher-is-better → "below BSP"
-    assert "2/4 weeks below BSP" in html
-
-
-def test_text_lever_shows_actual_vs_bsp(digest_a):
+def test_text_streak_phrase_present(digest_a):
     text = render_text(digest_a, "Test Subject")
-    assert "actual 32.00% vs BSP 14.00%" in text
-
-
-def test_text_streak_direction_present(digest_a):
-    text = render_text(digest_a, "Test Subject")
-    assert "above BSP" in text or "below BSP" in text
-
-
-def test_html_no_actual_vs_bsp_when_empty(digest_a):
-    # Verify the conditional renders — no "actual  vs BSP" (double space from empty str)
-    html = render_html(digest_a, "Test Subject")
-    assert "actual  vs BSP" not in html
+    assert "Above benchmark in 3 of the last 4 weeks." in text
 
 
 # --- Overview section tests ---
 
 def test_html_overview_present(digest_a):
     html = render_html(digest_a, "Test Subject")
-    assert "overview-tiles" in html
+    assert "kpi-tiles" in html
 
 
 def test_html_overview_total_sheets(digest_a):
@@ -142,19 +130,19 @@ def test_html_overview_total_sheets(digest_a):
     assert "19,800" in html
 
 
-def test_html_overview_machines_impacted(digest_a):
-    # Both machines have total_sheet_impact > 0
+def test_html_no_machines_impacted_tile(digest_a):
+    # "Machines impacted" tile removed in V2
     html = render_html(digest_a, "Test Subject")
-    assert ">2<" in html or "tile-value\">2" in html or ">2\n" in html
+    assert "Machines impacted" not in html
 
 
 def test_html_overview_top_driver(digest_a):
-    # Gluer 01's top lever is Downtime Reason (5,100 sheets) — must appear in Top Lever column
+    # Gluer 01's top lever is Downtime Reason (5,100 sheets) — must appear in the Top driver tile
     html = render_html(digest_a, "Test Subject")
     assert "5,100" in html
 
 
-def test_html_overview_top_movers_order(digest_a):
+def test_html_focus_machines_order(digest_a):
     # Gluer 01 (12,500 sheets) must appear before Gluer 02 (7,300 sheets)
     html = render_html(digest_a, "Test Subject")
     pos1 = html.index("Elk Grove / Gluer 01")
@@ -162,16 +150,15 @@ def test_html_overview_top_movers_order(digest_a):
     assert pos1 < pos2
 
 
-def test_html_overview_no_maintenance_line_when_absent(digest_a):
-    # digest_a has no findings/pm attached — maintenance one-liner must be suppressed
+def test_html_no_maintenance_report_when_absent(digest_a):
+    # digest_a has no findings/pm attached — Maintenance report section must be suppressed
     html = render_html(digest_a, "Test Subject")
-    assert "see Maintenance Report below" not in html
+    assert "Maintenance report" not in html
 
 
-def test_html_overview_driver_b(digest_b):
-    # Chicago / Flexo 01's top lever is Speed — must appear in Top Lever column
+def test_html_where_to_focus_heading(digest_b):
     html = render_html(digest_b, "Test Subject")
-    assert "Top Lever" in html
+    assert "Where to focus this week" in html
 
 
 def test_text_overview_present(digest_a):
@@ -189,56 +176,37 @@ def test_text_overview_top_mover(digest_a):
     assert "Elk Grove / Gluer 01" in text
 
 
-def test_html_overview_oee_columns_present(digest_a):
+def test_html_machine_oee_vs_bsp_present(digest_a):
+    # Gluer 01: cur_oee=0.6234 → 62.34%, bsp=0.7812 → 78.12%
     html = render_html(digest_a, "Test Subject")
-    assert "Cur OEE" in html
-    assert "BSP OEE" in html
-    # Gluer 01: cur_oee=0.6234 → 62.34%
-    assert "62.34%" in html
-    assert "78.12%" in html
+    assert "OEE 62.34% vs BSP 78.12%" in html
 
 
-def test_html_overview_downtime_reason_relabeled(digest_a):
-    # Gluer 01's top lever is Downtime Reason — overview column should show "Downtime"
-    html = render_html(digest_a, "Test Subject")
-    assert ">Downtime<" in html
-
-
-def test_html_graphic_care_findings_subheading(digests_with_findings):
-    # subheading changed; "Maintenance Findings" must not appear
+def test_html_graphic_care_findings_wording(digests_with_findings):
     digest = next(d for d in digests_with_findings if d.manager_email == "manager.a@company.com")
     html = render_html(digest, "Test Subject")
     assert "Maintenance Findings" not in html
     assert "Graphic Care Findings" in html
 
 
-def test_html_gc_open_column_header(digests_with_findings):
-    # Maintenance Report table only renders when findings are attached
+def test_html_maintenance_report_shows_missing_wo(digests_with_findings):
+    # Maintenance report only renders when findings are attached
     digest = next(d for d in digests_with_findings if d.manager_email == "manager.a@company.com")
     html = render_html(digest, "Test Subject")
-    assert "GC Open" in html
-    assert "GC Missing WO" in html
+    assert "Missing Work Order" in html
 
 
-def test_text_overview_oee_columns_present(digest_a):
+def test_html_maintenance_report_plain_english_pm_wording(digests_with_findings):
+    digest = next(d for d in digests_with_findings if d.manager_email == "manager.a@company.com")
+    html = render_html(digest, "Test Subject")
+    assert "1.5" not in html  # no jargon "1.5x allowed days" wording
+    assert "significantly overdue" in html
+    assert "allowable completion window" in html
+
+
+def test_text_machine_oee_vs_bsp_present(digest_a):
     text = render_text(digest_a, "Test Subject")
-    assert "Cur OEE" in text
-    assert "BSP OEE" in text
-    assert "62.34%" in text
-
-
-def test_html_time_lever_shows_mins(digest_a):
-    # Gluer 01 Lever_2 is Avg MR Time (0.45 hr → 27 Mins, 0.333 hr → 20 Mins)
-    html = render_html(digest_a, "Test Subject")
-    assert "27 Mins" in html
-    assert "20 Mins" in html
-
-
-def test_html_speed_lever_integer(digest_b):
-    # Chicago / Flexo 01 Speed lever: 45,000 and 52,000 (no decimals)
-    html = render_html(digest_b, "Test Subject")
-    assert "45,000" in html
-    assert "52,000" in html
+    assert "OEE 62.34% vs BSP 78.12%" in text
 
 
 def test_html_no_scrap_reason_in_output(digest_a):

@@ -187,3 +187,53 @@ def test_speed_lever_formats_as_integer(df):
     speed_lever = next(l for l in wc10.levers if l.name.strip() == "Speed")
     assert speed_lever.cur_actual == "45,000"
     assert speed_lever.bsp_benchmark == "52,000"
+
+
+def test_lever_has_action_and_streak_phrase(df):
+    digests = group_by_manager(df)
+    a = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    wc01 = next(m for m in a.machines if "Gluer 01" in m.plant_wc)
+    lvr = wc01.levers[0]
+    assert lvr.action  # never blank, even on a lookup miss (fixture uses "Motor Fault")
+    assert lvr.streak_phrase
+
+
+def test_downtime_reason_streak_phrase_is_bsp_count():
+    from src.grouper import _streak_phrase
+    assert _streak_phrase("Downtime Reason", 3, "above BSP") == "Above benchmark in 3 of the last 4 weeks."
+    assert _streak_phrase("Downtime Reason", 0, "above BSP") == "First week above benchmark in the last 4."
+    assert _streak_phrase("Downtime Reason", 4, "above BSP") == "Above benchmark in all 4 of the last 4 weeks."
+
+
+def test_main_kpi_streak_phrase_is_consecutive_worse_weeks():
+    from src.grouper import _streak_phrase
+    assert _streak_phrase("Speed", 0, "below BSP") == "Below benchmark this week — watch next week."
+    assert _streak_phrase("Speed", 1, "below BSP") == "Trending worse — first week worse than last."
+    assert _streak_phrase("Speed", 3, "below BSP") == "Trending worse for 3 weeks straight — needs attention."
+    assert _streak_phrase("Speed", 4, "below BSP") == "Trending worse for 4+ weeks straight — needs attention."
+
+
+def test_main_kpi_streak_phrase_direction_for_lower_is_better_lever():
+    from src.grouper import _streak_phrase
+    # Downtime % is lower-is-better — direction is "above BSP", verb should read "Above"
+    assert _streak_phrase("Downtime %", 0, "above BSP") == "Above benchmark this week — watch next week."
+
+
+def test_focus_machines_caps_at_three(df):
+    digests = group_by_manager(df)
+    a = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    assert len(a.focus_machines) <= 3
+    assert a.focus_machines == sorted(a.focus_machines, key=lambda m: m.total_sheet_impact, reverse=True)
+
+
+def test_other_machines_is_remainder_beyond_focus(df):
+    digests = group_by_manager(df)
+    c = next(d for d in digests if d.manager_email == "manager.c@company.com")
+    impacted = [m for m in c.machines if m.total_sheet_impact > 0]
+    assert c.focus_machines + c.other_machines == impacted
+
+
+def test_overview_maint_missing_wo_present(df):
+    digests = group_by_manager(df)
+    a = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    assert isinstance(a.overview.maint_missing_wo, int)
