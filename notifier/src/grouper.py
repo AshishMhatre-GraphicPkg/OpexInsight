@@ -247,6 +247,24 @@ def _nan_to_none(val):
     return val
 
 
+def _unique_join(values: list[str], max_items: int = 3) -> str:
+    """Summarise a digest's plant/department values for the feedback token:
+    the single value if all machines agree, a joined list of up to
+    max_items, or "Multiple" beyond that. A manager who covers several
+    plants/departments therefore gets a stable-but-summarised token, not one
+    per machine — the acknowledgement loop is digest-level, not per-machine.
+    """
+    uniq: list[str] = []
+    for v in values:
+        if v and v not in uniq:
+            uniq.append(v)
+    if not uniq:
+        return ""
+    if len(uniq) <= max_items:
+        return " / ".join(uniq)
+    return "Multiple"
+
+
 def _build_levers(row: pd.Series) -> list[LeverSummary]:
     department = str(row.get(_COL_DEPT, "") or "")
     levers = []
@@ -370,6 +388,9 @@ def group_by_manager(
         period = str(group[_COL_PERIOD].iloc[0])
 
         machines = [build_machine(row, findings_df, pm_df) for _, row in group.iterrows()]
+        ack_plant = _unique_join([m.plant for m in machines if m.plant])
+        ack_dept = _unique_join([m.department for m in machines if m.department])
+        ack_manager_label = feedback_mod.manager_label_from_email(str(email))
 
         digests.append(
             ManagerDigest(
@@ -378,8 +399,8 @@ def group_by_manager(
                 period_start=period,
                 machines=machines,
                 overview=_build_overview(machines),
-                ack=feedback_mod.build_ack_links(feedback_cfg, "P", period, str(email)),
-                last_ack=feedback_mod.last_ack_for(responses_df, "P", str(email), period),
+                ack=feedback_mod.build_ack_links(feedback_cfg, ack_plant, ack_dept, period, ack_manager_label),
+                last_ack=feedback_mod.last_ack_for(responses_df, ack_plant, ack_dept, ack_manager_label, period),
             )
         )
 

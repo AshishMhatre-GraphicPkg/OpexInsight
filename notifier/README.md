@@ -213,6 +213,8 @@ feedback:
   param_token: "r<id-of-reference-question>"
   answer_yes: "Yes - we will action this"   # must match the Form's Choice option text exactly
   answer_no: "No - not relevant this week"  # must match the Form's Choice option text exactly
+  yes_button_label: "Yes"   # the button TEXT in the email — independent of answer_yes above
+  no_button_label: "No"
   responses_path: "Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/InsightEngineAcknowledgement.xlsx"
   col_token: "Reference (Do not edit)"      # exact capitalization used in the question title
   col_answer: "Will your plant action these insights this week?"
@@ -232,9 +234,19 @@ week" recall line are both omitted from every digest.
 
 ### 3. How it works
 
-- Each button URL encodes a plain-text token —
-  `<P|R>|<period_start>|<recipient email>` — so a click can be traced back
-  to the exact digest (plant or regional) and week it came from.
+- Each button URL encodes a plain-text, human-readable token —
+  `<plant>|<department>|<period_start>|<manager label>`, e.g.
+  `Elk Grove|Gluer|2026-04-20|Manager A` — so a click can be traced back to
+  the exact digest and week it came from just by reading the "Reference"
+  column in the results workbook. Regional digests use the constant
+  placeholders `Region|All Plants` in place of a single plant/department.
+  The "manager label" is **derived from the email** (`manager.a@company.com`
+  → `Manager A`), not a real name pulled from `PlantManagers.xlsx` — see
+  `notifier/CLAUDE.md` § Acknowledgement loop if you want to wire in the
+  real `Manager_Name` later.
+- Button text is just **"Yes" / "No"** (`feedback.yes_button_label` /
+  `no_button_label`) — independent of `answer_yes` / `answer_no`, which
+  must match the Form's Choice option text exactly.
 - The notifier reads the Form's results workbook each run (same
   `Sites.Read.All` GET pattern as `Findings.csv` / `PMComplianceDump.xlsx`)
   and shows each manager whether they acknowledged **last week's** digest,

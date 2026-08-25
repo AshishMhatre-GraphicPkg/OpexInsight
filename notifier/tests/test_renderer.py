@@ -282,8 +282,8 @@ FEEDBACK_CFG = {
     "form_url": "https://forms.office.com/Pages/ResponsePage.aspx?id=ABC123",
     "param_answer": "r1",
     "param_token": "r2",
-    "answer_yes": "Yes — we will action this",
-    "answer_no": "No — not relevant this week",
+    "answer_yes": "Yes - we will action this",
+    "answer_no": "No - not relevant this week",
 }
 
 
@@ -308,6 +308,27 @@ def test_html_ack_block_renders_when_configured():
     assert digest.ack.no_url in html
 
 
+def test_html_ack_buttons_show_plain_yes_no_labels():
+    df = pd.read_csv(FIXTURE)
+    digests = group_by_manager(df, feedback_cfg=FEEDBACK_CFG)
+    digest = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    assert digest.ack.yes_label == "Yes"
+    assert digest.ack.no_label == "No"
+    html = render_html(digest, "Test Subject")
+    assert ">Yes<" in html
+    assert ">No<" in html
+
+
+def test_html_ack_token_carries_plant_department_and_manager_label():
+    df = pd.read_csv(FIXTURE)
+    digests = group_by_manager(df, feedback_cfg=FEEDBACK_CFG)
+    digest = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    from urllib.parse import quote
+    from src.feedback import encode_token
+    token = encode_token("Elk Grove", "Gluer", digest.period_start, "Manager A")
+    assert quote(token) in digest.ack.yes_url
+
+
 def test_text_ack_block_renders_urls_when_configured():
     df = pd.read_csv(FIXTURE)
     digests = group_by_manager(df, feedback_cfg=FEEDBACK_CFG)
@@ -320,22 +341,24 @@ def test_text_ack_block_renders_urls_when_configured():
 def test_html_recall_line_renders_when_responses_present():
     import pandas as pd
     df = pd.read_csv(FIXTURE)
+    # manager.a@company.com's fixture rows are Plant="Elk Grove", Department="Gluer",
+    # Period_Start="2026-04-21" — the response below is for the prior week
+    # (2026-04-14) at the matching plant/department/manager-label and should surface.
     responses = pd.DataFrame(
         [
             {
-                "token": "x", "kind": "P", "period_start": "2026-04-13",
-                "email": "manager.a@company.com", "answer": "Yes",
+                "token": "x", "plant": "Elk Grove", "department": "Gluer", "period_start": "2026-04-14",
+                "manager_label": "Manager A", "answer": "Yes",
                 "comment": None, "submitted_at": "2026-04-14 08:00:00",
             },
         ]
     )
     digests = group_by_manager(df, feedback_cfg=FEEDBACK_CFG, responses_df=responses)
     digest = next(d for d in digests if d.manager_email == "manager.a@company.com")
-    # sample_summary.csv fixture period is 2026-04-20 (see fixture header) —
-    # the response above is for the prior week and should surface.
+    assert digest.last_ack is not None
+    assert digest.last_ack.answered is True
     html = render_html(digest, "Test Subject")
-    if digest.last_ack and digest.last_ack.answered:
-        assert "acknowledged last week" in html
+    assert "acknowledged last week" in html
 
 
 def test_regional_html_ack_block_renders_when_configured():

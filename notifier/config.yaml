@@ -41,8 +41,8 @@ feedback:
   # Must match the Choice question's option text EXACTLY (plain hyphen, not em dash).
   answer_yes: "Yes - we will action this"
   answer_no: "No - not relevant this week"
-  yes_button_label: "Yes — we'll action this"
-  no_button_label: "No — not relevant"
+  yes_button_label: "Yes"
+  no_button_label: "No"
   responses_path: "Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/InsightEngineAcknowledgement.xlsx"
   responses_sheet: 0
   # These three must match the actual Excel column headers exactly — Forms'

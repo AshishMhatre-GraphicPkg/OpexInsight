@@ -297,16 +297,39 @@ SharePoint site needs none of that: it's a receiver the tenant already
 hosts, and its results workbook syncs to Excel in the same document library
 `fetch.py` already reads.
 
-**Identity token**, plain text so the results workbook stays readable:
-`"<kind>|<period_start>|<email>"`, e.g. `"P|2026-04-20|manager.a@x.com"`.
-`kind` is `"P"` (plant digest) or `"R"` (regional digest) — the prefix
-exists so a person who is both a plant and a regional manager never
-collides across digest types for the same week. This is deliberately **not**
-`Insight_ID`: that ID is per-KPI grain and is collapsed away at the
-`MachineWeekSummary_Base` roll-up (`InsightOpexv1.qvs`, `LOAD DISTINCT
-Plant, [WC Object ID], [Plant - WC], Department, Period_Start`), so it never
-reaches `MachineWeekSummary.csv` — Plant+WC+Week is the grain the CSV
-actually carries, and manager+week is the grain the ack needs.
+**Identity token**, plain text and human-readable so the results workbook's
+"Reference" column is legible on its own:
+`"<plant>|<department>|<period_start>|<manager label>"`, e.g.
+`"Elk Grove|Gluer|2026-04-20|Manager A"`. For regional digests, `plant` and
+`department` are the constant placeholders `"Region"` / `"All Plants"`
+(a regional digest has no single plant/department) — that placeholder also
+prevents a person who is both a plant and a regional manager from
+colliding across digest types for the same week, since no real plant is
+ever named `"Region"`. This is deliberately **not** `Insight_ID`: that ID is
+per-KPI grain and is collapsed away at the `MachineWeekSummary_Base`
+roll-up (`InsightOpexv1.qvs`, `LOAD DISTINCT Plant, [WC Object ID],
+[Plant - WC], Department, Period_Start`), so it never reaches
+`MachineWeekSummary.csv`.
+
+`plant` / `department` are a **digest-level summary**, not a single
+machine's values — `grouper._unique_join()` collapses each digest's
+machines down to one value (all agree), a `" / "`-joined list (up to 3
+distinct values), or `"Multiple"` beyond that. A manager whose machine set
+spans several plants/departments therefore gets a token that's stable week
+to week only as long as that summary doesn't change shape — an edge case,
+documented rather than hidden.
+
+`manager label` is **not** a real display name — `MachineWeekSummary.csv`
+carries `Manager_Email` but no `Manager_Name` equivalent for plant digests
+(unlike `Regional_Manager_Name`, which Qlik does stamp, and which
+`regional.py` uses directly when present). `manager_label_from_email()`
+derives a readable stand-in from the email's local part (e.g.
+`"manager.a@company.com"` → `"Manager A"`). `PlantManagers.xlsx` already
+has a `Manager_Name` column (see `README.md` § PlantManagers.xlsx) — Qlik's
+Section 49 just doesn't currently map it onto `MachineWeekSummary.csv` the
+way it does `Regional_Manager_Name`. Wiring that through (one more
+`ApplyMap` + output column, mirroring the regional case) would let plant
+digests carry a real name instead of the derived one; not done here.
 
 ```python
 @dataclass
@@ -324,26 +347,35 @@ class LastAck:
     phrase: str                # rendered English — templates render this directly
 ```
 
-- `build_ack_links(feedback_cfg, kind, period_start, email)` → `AckLinks |
-  None`. Returns `None` whenever `feedback_cfg` is falsy, `enabled` is
-  false, or any required URL param is blank — the feature is **off by
-  default**, and `ManagerDigest.ack` / `RegionalDigest.ack` staying `None`
-  is what makes the templates omit the block entirely.
+- `build_ack_links(feedback_cfg, plant, department, period_start,
+  manager_label)` → `AckLinks | None`. Returns `None` whenever
+  `feedback_cfg` is falsy, `enabled` is false, or any required URL param is
+  blank — the feature is **off by default**, and `ManagerDigest.ack` /
+  `RegionalDigest.ack` staying `None` is what makes the templates omit the
+  block entirely. Button labels default to plain `"Yes"` / `"No"`
+  (`feedback_cfg["yes_button_label"]` / `["no_button_label"]` to override).
 - `load_responses(xlsx_bytes, feedback_cfg)` → normalised DataFrame
-  (`token, kind, period_start, email, answer, comment, submitted_at`). Rows
-  whose token doesn't parse are dropped, never raised — malformed Forms
-  data must not break a run.
-- `last_ack_for(responses_df, kind, email, period_start)` → `LastAck | None`.
-  Looks up the **prior** week (`period_start − 7 days`); `None` means the
-  loop wasn't live that week (`responses_df is None`), so nothing renders on
-  the very first run rather than a misleading "no response."
+  (`token, plant, department, period_start, manager_label, answer, comment,
+  submitted_at`). Rows whose token doesn't parse are dropped, never raised —
+  malformed Forms data must not break a run.
+- `last_ack_for(responses_df, plant, department, manager_label,
+  period_start)` → `LastAck | None`. Looks up the **prior** week
+  (`period_start − 7 days`) by exact `(plant, department, manager_label)`
+  match; `None` means the loop wasn't live that week (`responses_df is
+  None`), so nothing renders on the very first run rather than a misleading
+  "no response."
 - `ack_stats(responses_df, period_start)` — one admin-log line per run
   (`main.py`), not surfaced to managers.
 - Both `group_by_manager()` and `group_by_regional_manager()` take
   `feedback_cfg=None, responses_df=None` as the last two params (default
-  `None`, so every pre-existing call site and test is unaffected) and pass
-  `kind="P"` / `kind="R"` respectively into `build_ack_links` /
-  `last_ack_for`.
+  `None`, so every pre-existing call site and test is unaffected). Each
+  derives its own `(plant, department, manager_label)` before calling
+  `build_ack_links` / `last_ack_for` — `group_by_manager()` via
+  `_unique_join()` over its machines' `plant`/`department` fields plus
+  `manager_label_from_email(manager_email)`; `group_by_regional_manager()`
+  via the constant `("Region", "All Plants")` placeholder plus
+  `regional_manager_name` (falling back to the email-derived label when
+  absent).
 - `MachineSummary` also gained `plant` / `wc_object_id` fields —
   `build_machine()` already read both as findings/PM join keys and
   discarded them; they're now persisted, which is the whole prerequisite

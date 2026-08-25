@@ -169,6 +169,9 @@ def group_by_regional_manager(
         if _COL_RM_NAME in group.columns:
             rm_name = _nan_to_none(group[_COL_RM_NAME].iloc[0])
         period = str(group[_COL_PERIOD].iloc[0])
+        # Regional_Manager_Name is a real display name (unlike plant Manager_Email,
+        # which has none) — prefer it, falling back to the email-derived label.
+        ack_manager_label = str(rm_name) if rm_name else feedback_mod.manager_label_from_email(str(email))
 
         machines = [build_machine(row, findings_df, pm_df) for _, row in group.iterrows()]
         plants_by_row = group[_COL_PLANT].astype(str).tolist()
@@ -225,8 +228,12 @@ def group_by_regional_manager(
                 maint_overdue_pm=maint_pm,
                 plant_rollups=plant_rollups,
                 departments=departments,
-                ack=feedback_mod.build_ack_links(feedback_cfg, "R", period, str(email)),
-                last_ack=feedback_mod.last_ack_for(responses_df, "R", str(email), period),
+                ack=feedback_mod.build_ack_links(
+                    feedback_cfg, "Region", "All Plants", period, ack_manager_label
+                ),
+                last_ack=feedback_mod.last_ack_for(
+                    responses_df, "Region", "All Plants", ack_manager_label, period
+                ),
             )
         )
 
