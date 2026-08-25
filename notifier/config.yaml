@@ -25,3 +25,32 @@ email_subject_prefix: "Weekly OEE Insight Digest"
 regional_subject_prefix: "Regional OEE Summary"
 regional_top_n: 3
 
+# Digest acknowledgement loop (Yes/No + optional comment via a Microsoft Form).
+# Disabled until the form is created — see notifier/README.md for the setup
+# runbook. Leave `enabled: false` until form_url / param_answer / param_token
+# are filled in from the form's "Get pre-filled URL" link.
+feedback:
+  # Live — verified end-to-end 2026-08-25: pre-filled buttons, real form
+  # submission, and notifier ingestion of the synced workbook all confirmed
+  # working. Note: the workbook only refreshes its stored bytes when someone
+  # opens it in Excel — see notifier/README.md "Digest acknowledgement loop".
+  enabled: true
+  form_url: "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=ydc889aZEU2CphWqRbk-LxVWK9eFIrNNnxlkQnxioI1UMVk2RDhESkNZQzVJMUkyUzU2OVk1M0VNWC4u"
+  param_answer: "r706e02b07d0d4841a9a358286c5f20e6"
+  param_token: "rf808ec384d2c4f9aa674682b782847e4"
+  # Must match the Choice question's option text EXACTLY (plain hyphen, not em dash).
+  answer_yes: "Yes - we will action this"
+  answer_no: "No - not relevant this week"
+  yes_button_label: "Yes — we'll action this"
+  no_button_label: "No — not relevant"
+  responses_path: "Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/InsightEngineAcknowledgement.xlsx"
+  responses_sheet: 0
+  # These three must match the actual Excel column headers exactly — Forms'
+  # "Open in Excel" sync trims "(optional)" from question titles and only
+  # exports the question-answer columns (no ID/timestamp/identity columns),
+  # confirmed against the real synced workbook (table name "Response").
+  col_token: "Reference (Do not edit)"
+  col_answer: "Will your plant action these insights this week?"
+  col_comment: "Anything we should know?"
+  col_submitted: "Completion time"  # not present in this workbook — harmless, treated as optional
+

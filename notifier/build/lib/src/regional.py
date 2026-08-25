@@ -12,11 +12,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from . import feedback as feedback_mod
 from .grouper import (
     MachineSummary,
     MoverRow,
@@ -24,9 +22,6 @@ from .grouper import (
     _nan_to_none,
     build_machine,
 )
-
-if TYPE_CHECKING:
-    from .feedback import AckLinks, LastAck
 
 log = logging.getLogger(__name__)
 
@@ -74,8 +69,6 @@ class RegionalDigest:
     maint_overdue_pm: int
     plant_rollups: list[PlantRollup] = field(default_factory=list)
     departments: list[DepartmentSection] = field(default_factory=list)
-    ack: AckLinks | None = None
-    last_ack: LastAck | None = None
 
     @property
     def has_maintenance(self) -> bool:
@@ -129,18 +122,12 @@ def group_by_regional_manager(
     findings_df: pd.DataFrame | None = None,
     pm_df: pd.DataFrame | None = None,
     top_n: int = _DEFAULT_TOP_N,
-    feedback_cfg: dict | None = None,
-    responses_df: pd.DataFrame | None = None,
 ) -> list[RegionalDigest]:
     """Return one RegionalDigest per unique Regional_Manager_Email, ordered by total sheets DESC.
 
     Returns [] (with a log message, not an exception) when Regional_Manager_Email
     is absent from the CSV — lets the notifier keep working against a
     MachineWeekSummary.csv produced before the Qlik reload that added it.
-
-    feedback_cfg / responses_df: same acknowledgement-loop inputs as
-    grouper.group_by_manager(), using kind="R" so a regional manager's ack
-    never collides with their plant-manager ack for the same week.
     """
     if _COL_RM_EMAIL not in df.columns:
         log.info(
@@ -225,8 +212,6 @@ def group_by_regional_manager(
                 maint_overdue_pm=maint_pm,
                 plant_rollups=plant_rollups,
                 departments=departments,
-                ack=feedback_mod.build_ack_links(feedback_cfg, "R", period, str(email)),
-                last_ack=feedback_mod.last_ack_for(responses_df, "R", str(email), period),
             )
         )
 

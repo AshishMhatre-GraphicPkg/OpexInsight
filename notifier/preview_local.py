@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 from src import logging_setup
 from src.findings import load_findings
@@ -45,9 +46,20 @@ def main(args: argparse.Namespace) -> int:
     findings_df = load_findings(Path(args.findings).read_bytes()) if args.findings else None
     pm_df = load_pm_compliance(Path(args.pm).read_bytes()) if args.pm else None
 
-    digests = group_by_manager(df, findings_df=findings_df, pm_df=pm_df)
+    # Offline preview: build ack links from config alone (no Forms responses
+    # fetch — there's no SharePoint access here), so the buttons render but
+    # last week's recall line never does.
+    feedback_cfg = None
+    if args.config:
+        try:
+            with open(args.config) as f:
+                feedback_cfg = yaml.safe_load(f).get("feedback")
+        except FileNotFoundError:
+            pass
+
+    digests = group_by_manager(df, findings_df=findings_df, pm_df=pm_df, feedback_cfg=feedback_cfg)
     regional_digests = group_by_regional_manager(
-        df, findings_df=findings_df, pm_df=pm_df, top_n=args.top_n
+        df, findings_df=findings_df, pm_df=pm_df, top_n=args.top_n, feedback_cfg=feedback_cfg
     )
 
     if not digests and not regional_digests:
@@ -75,4 +87,5 @@ if __name__ == "__main__":
     parser.add_argument("--pm", default=None, help="Optional path to PMComplianceDump.xlsx")
     parser.add_argument("--out", default="out/preview/local")
     parser.add_argument("--top-n", type=int, default=3, dest="top_n", help="Machines shown per department in regional digests")
+    parser.add_argument("--config", default="config.yaml", help="Path to config.yaml, read only for the feedback: block (offline — no SharePoint calls)")
     sys.exit(main(parser.parse_args()))

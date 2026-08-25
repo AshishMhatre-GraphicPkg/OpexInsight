@@ -93,22 +93,3 @@ def fetch_pm_xlsx(config: dict, env: dict) -> bytes:
 
     log.info("Fetched PM compliance: %s bytes", len(content.content))
     return content.content
-
-
-def fetch_feedback_xlsx(config: dict, env: dict) -> bytes:
-    """Pull the Microsoft Forms acknowledgement-responses workbook from SharePoint."""
-    token = _get_token(
-        env["AZURE_TENANT_ID"], env["AZURE_CLIENT_ID"], env["AZURE_CLIENT_SECRET"]
-    )
-    headers = {"Authorization": f"Bearer {token}"}
-    file_path = config["feedback"]["responses_path"]
-
-    meta_url = _file_url(config, file_path)
-    meta = requests.get(meta_url, headers=headers, timeout=30)
-    meta.raise_for_status()
-    download_url = meta.json()["@microsoft.graph.downloadUrl"]
-    content = requests.get(download_url, timeout=60)
-    content.raise_for_status()
-
-    log.info("Fetched feedback responses: %s bytes", len(content.content))
-    return content.content

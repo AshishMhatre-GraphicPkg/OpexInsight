@@ -20,7 +20,8 @@ import yaml
 from dotenv import load_dotenv
 
 from src import logging_setup
-from src.fetch import fetch_csv, fetch_findings_csv, fetch_pm_xlsx
+from src.fetch import fetch_csv, fetch_feedback_xlsx, fetch_findings_csv, fetch_pm_xlsx
+from src.feedback import load_responses
 from src.findings import load_findings
 from src.pm_compliance import load_pm_compliance
 from src.freshness import StaleDataError, assert_fresh
@@ -208,6 +209,19 @@ def main(args: argparse.Namespace) -> int:
     else:
         log.info("sharepoint_pm_path not configured — skipping PM compliance")
 
+    # --- Fetch feedback responses (non-fatal) ---
+    feedback_cfg = config.get("feedback")
+    responses_df = None
+    if feedback_cfg and feedback_cfg.get("enabled"):
+        log.info("Fetching feedback responses …")
+        try:
+            responses_df = load_responses(fetch_feedback_xlsx(config, env), feedback_cfg)
+            log.info("Feedback responses loaded: %d rows", len(responses_df))
+        except Exception as exc:
+            log.warning("Feedback fetch failed — digest will render without the recall line: %s", exc)
+    else:
+        log.info("feedback.enabled is false — skipping acknowledgement loop")
+
     # --- Group and render ---
     df = pd.read_csv(io.BytesIO(csv_bytes))
 
@@ -236,9 +250,13 @@ def main(args: argparse.Namespace) -> int:
     else:
         log.info("No routing fallbacks — every row matched Plant+Department")
 
-    digests = group_by_manager(df, findings_df=findings_df, pm_df=pm_df)
+    digests = group_by_manager(
+        df, findings_df=findings_df, pm_df=pm_df,
+        feedback_cfg=feedback_cfg, responses_df=responses_df,
+    )
     regional_digests = group_by_regional_manager(
-        df, findings_df=findings_df, pm_df=pm_df, top_n=config.get("regional_top_n", 3)
+        df, findings_df=findings_df, pm_df=pm_df, top_n=config.get("regional_top_n", 3),
+        feedback_cfg=feedback_cfg, responses_df=responses_df,
     )
     log.info("Regional managers: %d", len(regional_digests))
 

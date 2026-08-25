@@ -24,17 +24,7 @@ WHERE TO FOCUS THIS WEEK
 {% endif %}
               {{ m.total_sheet_impact | comma_int }} sheets lost
               {{ l.streak_phrase }}
-  LIKELY CAUSES AND RECOMMENDED ACTIONS:
-{% if l.action_pairs %}
-{% for p in l.action_pairs %}
-{% if p.factor %}
-    Factor {{ loop.index }}: {{ p.factor }}
-{% endif %}
-    Action {{ loop.index }}: {{ p.action }}
-{% endfor %}
-{% else %}
-    {{ l.action }}
-{% endif %}
+  HOW TO FIX: {{ l.action }}
 {% if m.findings and m.findings.corroborated_sections %}
               ! Open Graphic Care {{ m.findings.total_open | pluralize('finding') }} on {{ m.findings.corroborated_sections | join(', ') }} may already cover this — check before scheduling new work.
 {% endif %}
@@ -56,15 +46,5 @@ MAINTENANCE REPORT
 "Critically overdue" means a PM procedure that is significantly overdue and has exceeded its allowable completion window.
 
 {% endif %}
-{% if digest.last_ack %}
-{{ digest.last_ack.phrase }}
-
-{% endif %}
-{% if digest.ack %}
-Will your plant action these insights this week?
-  YES: {{ digest.ack.yes_url }}
-  NO:  {{ digest.ack.no_url }}
-
-{% endif %}
 ---
-Generated automatically by the OPEX Insight Engine. Do not reply.
+Generated automatically by the Folding Carton Actionable Intelligence Platform. Do not reply.

@@ -43,5 +43,15 @@ PLANTS
 {% endif %}
 
 {% endfor %}
+{% if digest.last_ack %}
+{{ digest.last_ack.phrase }}
+
+{% endif %}
+{% if digest.ack %}
+Will you action these insights this week?
+  YES: {{ digest.ack.yes_url }}
+  NO:  {{ digest.ack.no_url }}
+
+{% endif %}
 ---
 Generated automatically. For per-machine detail, see the plant manager digest for each plant in this region. Do not reply.

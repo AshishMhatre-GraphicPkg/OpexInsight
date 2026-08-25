@@ -153,6 +153,106 @@ The schedule `0 0 7 * * 1` fires at 07:00 UTC Monday. Adjust for local timezone 
 
 ---
 
+## Digest acknowledgement loop (feedback)
+
+A Yes/No button pair at the bottom of each digest lets a manager confirm
+they'll act on the week's insights, or mark it not relevant — with an
+optional comment. It reuses the Azure AD app's existing `Sites.Read.All`
+permission; no new Azure permission, hosting, or licence is required. The
+receiver is a Microsoft **group Form** on the same SharePoint site; nothing
+in this repo can accept an inbound HTTP request, so the buttons link out to
+a page the tenant already hosts.
+
+### 1. Create the Form
+
+1. In [forms.office.com](https://forms.office.com), create a **group form**
+   owned by the group behind the SharePoint site used above — **not** a
+   personal form. A personal form's results workbook lands in the creator's
+   OneDrive, which the notifier's `Sites.Read.All` cannot read.
+2. Add three questions, in this order:
+   - **Choice**, required — *"Will your plant action these insights this
+     week?"* Options exactly:
+     - `Yes - we will action this`
+     - `No - not relevant this week`
+   - **Text**, optional — *"Anything we should know? (optional)"* — Forms
+     trims the `(optional)` suffix off the question title before it becomes
+     an Excel column header, so `config.yaml`'s `col_comment` should be just
+     `"Anything we should know?"` (confirmed against a real synced workbook).
+   - **Text**, required — *"Reference (Do not edit)"* — this receives the
+     hidden token that identifies the digest; the button URL fills it in
+     automatically. Whatever capitalization you use becomes the literal
+     Excel column header, so `config.yaml`'s `col_token` must match exactly.
+3. Under **Settings**, set responses to **people in your organization** and
+   turn on **record name**. This cross-checks the token against the actual
+   signed-in responder, so a forwarded email can't spoof someone else's
+   acknowledgement. If the sign-in wall hurts response rates, relax this —
+   the token still identifies who the digest was addressed to. Note: the
+   synced Excel workbook does **not** carry a submitted-by or timestamp
+   column regardless of this setting — only the three question-answer
+   columns are exported (confirmed against a real synced workbook, table
+   name `"Response"`).
+4. **Collect responses → Get a link to collect responses → Get pre-filled
+   link**. Answer the Choice and Reference questions with placeholder text,
+   copy the generated URL, and read off the `r<id>=` parameter names — one
+   for the Choice question, one for the Reference question. Those go into
+   `config.yaml`'s `feedback.param_answer` / `feedback.param_token`. Note
+   the Choice answer's value in that URL is wrapped in literal `%22...%22`
+   (URL-encoded double quotes) — that's Forms' pre-fill format for Choice
+   questions, and `build_ack_links()` reproduces it automatically; you don't
+   need to add the quotes yourself in `config.yaml`'s `answer_yes`/`answer_no`.
+5. Open the form's **Responses → Open in Excel** to create the syncing
+   results workbook in the site's document library. Note its path.
+
+### 2. Configure `config.yaml`
+
+```yaml
+feedback:
+  enabled: true
+  form_url: "https://forms.office.com/Pages/ResponsePage.aspx?id=<FORM_ID>"
+  param_answer: "r<id-of-choice-question>"
+  param_token: "r<id-of-reference-question>"
+  answer_yes: "Yes - we will action this"   # must match the Form's Choice option text exactly
+  answer_no: "No - not relevant this week"  # must match the Form's Choice option text exactly
+  responses_path: "Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/InsightEngineAcknowledgement.xlsx"
+  col_token: "Reference (Do not edit)"      # exact capitalization used in the question title
+  col_answer: "Will your plant action these insights this week?"
+  col_comment: "Anything we should know?"   # no "(optional)" — Forms trims it
+```
+
+`col_token` / `col_answer` / `col_comment` / `col_submitted` must match the
+actual Excel column headers exactly (Forms names them after the question
+text, with the caveats above) — if you word the questions differently,
+override these. `col_submitted` will typically not exist in the sheet at
+all (see the note in step 3 above); that's fine, `load_responses()` treats
+it as optional.
+
+Leave `feedback.enabled: false` (the default) until the form exists and
+these fields are filled in — with it disabled, the buttons and the "last
+week" recall line are both omitted from every digest.
+
+### 3. How it works
+
+- Each button URL encodes a plain-text token —
+  `<P|R>|<period_start>|<recipient email>` — so a click can be traced back
+  to the exact digest (plant or regional) and week it came from.
+- The notifier reads the Form's results workbook each run (same
+  `Sites.Read.All` GET pattern as `Findings.csv` / `PMComplianceDump.xlsx`)
+  and shows each manager whether they acknowledged **last week's** digest,
+  right above this week's buttons.
+- A fetch failure here is non-fatal: digests still send, just without the
+  recall line, and one admin alert fires (`src/feedback.py`,
+  `main.py`).
+- **The workbook's stored bytes only update when someone opens the file**
+  (confirmed empirically: a real form submission did not appear via the
+  Graph API download until the workbook was opened in Excel Online, at
+  which point it synced and the notifier picked it up on the next fetch).
+  In practice this means a Monday-morning run could occasionally read a
+  slightly stale snapshot if nobody has opened the workbook recently — the
+  loop still works, it just isn't guaranteed instant. If this turns out to
+  matter, consider a small scheduled task that opens/saves the workbook
+  ahead of the weekly send, or querying the Forms API directly instead of
+  the Excel sync.
+
 ## Freshness check
 
 The notifier aborts and sends an admin alert if `MachineWeekSummary.csv` is older than `freshness_max_hours` (default 24h). This catches cases where the Qlik reload did not run or failed silently.

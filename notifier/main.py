@@ -20,7 +20,8 @@ import yaml
 from dotenv import load_dotenv
 
 from src import logging_setup
-from src.fetch import fetch_csv, fetch_findings_csv, fetch_pm_xlsx
+from src.fetch import fetch_csv, fetch_feedback_xlsx, fetch_findings_csv, fetch_pm_xlsx
+from src.feedback import ack_stats, load_responses
 from src.findings import load_findings
 from src.pm_compliance import load_pm_compliance
 from src.freshness import StaleDataError, assert_fresh
@@ -103,6 +104,19 @@ def main(args: argparse.Namespace) -> int:
             alert_html = render_admin_alert("PM Compliance fetch failure", traceback.format_exc())
             send_admin_alert(config, env, "Insight Notifier — PMComplianceDump.xlsx fetch failure", alert_html)
 
+    feedback_cfg = config.get("feedback")
+    responses_df = None
+    if feedback_cfg and feedback_cfg.get("enabled"):
+        try:
+            responses_df = load_responses(fetch_feedback_xlsx(config, env), feedback_cfg)
+        except Exception as exc:
+            log.error(
+                "Failed to fetch feedback responses — digests will send without the "
+                "last-week acknowledgement line: %s", exc,
+            )
+            alert_html = render_admin_alert("Feedback responses fetch failure", traceback.format_exc())
+            send_admin_alert(config, env, "Insight Notifier — feedback responses fetch failure", alert_html)
+
     df = pd.read_csv(io.BytesIO(csv_bytes))
 
     mismatches = find_routing_mismatches(df)
@@ -112,9 +126,13 @@ def main(args: argparse.Namespace) -> int:
         alert_html = render_admin_alert("Routing fallback", "\n".join(mismatches))
         send_admin_alert(config, env, "Insight Notifier — plant/department routing fallback", alert_html)
 
-    digests = group_by_manager(df, findings_df=findings_df, pm_df=pm_df)
+    digests = group_by_manager(
+        df, findings_df=findings_df, pm_df=pm_df,
+        feedback_cfg=feedback_cfg, responses_df=responses_df,
+    )
     regional_digests = group_by_regional_manager(
-        df, findings_df=findings_df, pm_df=pm_df, top_n=config.get("regional_top_n", 3)
+        df, findings_df=findings_df, pm_df=pm_df, top_n=config.get("regional_top_n", 3),
+        feedback_cfg=feedback_cfg, responses_df=responses_df,
     )
 
     if not digests and not regional_digests:
@@ -171,6 +189,10 @@ def main(args: argparse.Namespace) -> int:
         alert_html = render_admin_alert("Send failure", details)
         send_admin_alert(config, env, "Insight Notifier — some emails failed to send", alert_html)
         return 1
+
+    if responses_df is not None and digests:
+        responded, _ = ack_stats(responses_df, digests[0].period_start)
+        log.info("Feedback: %d acknowledgement(s) recorded for this period so far", responded)
 
     log.info(
         "Done — %d plant digest(s) + %d regional digest(s) %s",

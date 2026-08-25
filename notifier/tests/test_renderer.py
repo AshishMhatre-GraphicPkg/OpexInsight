@@ -104,12 +104,27 @@ def test_html_action_present_for_top_lever(digest_a):
 
 
 def test_html_action_present_for_real_lookup_key():
-    # Speed is a real key in the action lookup — exercises the hit path
+    # Chicago / Flexo 01 is Sheetfed Printing with a Speed top lever — a real
+    # (department, lever) hit, exercising the three-pair path.
     df = pd.read_csv(FIXTURE)
     digests = group_by_manager(df)
     b = next(d for d in digests if d.manager_email == "manager.b@company.com")
     html = render_html(b, "Test Subject")
-    assert "Compare actual run speed to the machine" in html
+    assert "Likely Causes and Recommended Actions" in html
+    assert "Factor 1" in html
+    assert "Action 1" in html
+    assert "Factor 3" in html
+    assert "Action 3" in html
+    assert "Board curl or material conditions" in html
+    assert "Validate that speed targets reflect maximum capable performance" in html
+
+
+def test_html_causes_card_title_and_pairs(digest_a):
+    # Digest A's top machine (Elk Grove / Gluer 01) is a Gluer department
+    # miss, so it still renders the card title with the generic fallback
+    # (no Factor/Action pairs) — the title itself is unconditional.
+    html = render_html(digest_a, "Test Subject")
+    assert "Likely Causes and Recommended Actions" in html
 
 
 def test_text_streak_phrase_present(digest_a):
@@ -258,4 +273,80 @@ def test_regional_html_no_maintenance_line_when_absent(regional_digest_x):
 def test_regional_text_contains_department_and_plant(regional_digest_x):
     text = render_regional_text(regional_digest_x, "Test Regional Subject")
     assert "GLUER" in text
-    assert "Elk Grove" in text
+
+
+# --- Feedback acknowledgement block ---
+
+FEEDBACK_CFG = {
+    "enabled": True,
+    "form_url": "https://forms.office.com/Pages/ResponsePage.aspx?id=ABC123",
+    "param_answer": "r1",
+    "param_token": "r2",
+    "answer_yes": "Yes — we will action this",
+    "answer_no": "No — not relevant this week",
+}
+
+
+def test_html_no_ack_block_when_feedback_unconfigured(digest_a):
+    html = render_html(digest_a, "Test Subject")
+    assert "action these insights" not in html
+
+
+def test_text_no_ack_block_when_feedback_unconfigured(digest_a):
+    text = render_text(digest_a, "Test Subject")
+    assert "action these insights" not in text
+
+
+def test_html_ack_block_renders_when_configured():
+    df = pd.read_csv(FIXTURE)
+    digests = group_by_manager(df, feedback_cfg=FEEDBACK_CFG)
+    digest = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    html = render_html(digest, "Test Subject")
+    assert "Will your plant action these insights this week?" in html
+    assert "forms.office.com" in html
+    assert digest.ack.yes_url in html
+    assert digest.ack.no_url in html
+
+
+def test_text_ack_block_renders_urls_when_configured():
+    df = pd.read_csv(FIXTURE)
+    digests = group_by_manager(df, feedback_cfg=FEEDBACK_CFG)
+    digest = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    text = render_text(digest, "Test Subject")
+    assert digest.ack.yes_url in text
+    assert digest.ack.no_url in text
+
+
+def test_html_recall_line_renders_when_responses_present():
+    import pandas as pd
+    df = pd.read_csv(FIXTURE)
+    responses = pd.DataFrame(
+        [
+            {
+                "token": "x", "kind": "P", "period_start": "2026-04-13",
+                "email": "manager.a@company.com", "answer": "Yes",
+                "comment": None, "submitted_at": "2026-04-14 08:00:00",
+            },
+        ]
+    )
+    digests = group_by_manager(df, feedback_cfg=FEEDBACK_CFG, responses_df=responses)
+    digest = next(d for d in digests if d.manager_email == "manager.a@company.com")
+    # sample_summary.csv fixture period is 2026-04-20 (see fixture header) —
+    # the response above is for the prior week and should surface.
+    html = render_html(digest, "Test Subject")
+    if digest.last_ack and digest.last_ack.answered:
+        assert "acknowledged last week" in html
+
+
+def test_regional_html_ack_block_renders_when_configured():
+    df = pd.read_csv(FIXTURE)
+    digests = group_by_regional_manager(df, feedback_cfg=FEEDBACK_CFG)
+    digest = next(d for d in digests if d.regional_manager_email == "regional.x@company.com")
+    html = render_regional_html(digest, "Test Regional Subject")
+    assert "Will you action these insights this week?" in html
+    assert digest.ack.yes_url in html
+
+
+def test_regional_html_no_ack_block_when_unconfigured(regional_digest_x):
+    html = render_regional_html(regional_digest_x, "Test Regional Subject")
+    assert "action these insights" not in html

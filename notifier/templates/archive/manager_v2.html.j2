@@ -25,17 +25,14 @@
   .kpi-tiles { border-collapse: separate; border-spacing: 6px 0; margin: 16px 0; width: 100%; }
   .focus-card { margin-top: 16px; background-color: {{ t.surface }}; border-left: 4px solid {{ t.accent }}; }
   .focus-table { border-collapse: collapse; width: 100%; }
-  .focus-table td { vertical-align: top; padding: 10px 12px; }
-  .dept-pill { display: inline-block; font-size: 0.72em; color: {{ t.primary }}; background: {{ t.surface_alt }}; padding: 2px 8px; border-radius: 10px; margin-top: 4px; }
+  .focus-table td { vertical-align: top; padding: 14px 12px; }
+  .dept-pill { display: inline-block; font-size: 0.72em; color: {{ t.primary }}; background: {{ t.surface_alt }}; padding: 2px 8px; border-radius: 10px; margin-top: 6px; }
   .card-label { font-size: 0.7em; font-weight: 700; color: {{ t.primary }}; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
   .streak-note { color: {{ t.attn_text }}; font-weight: bold; }
   .gc-note { margin-top: 8px; padding: 6px 8px; background: {{ t.attn_bg }}; border-left: 3px solid {{ t.attn_rule }}; font-size: 0.86em; color: {{ t.attn_text }}; }
   .also-impacted { margin-top: 14px; font-size: 0.9em; color: {{ t.ink_muted }}; }
   .maint-summary { margin-top: 10px; padding: 10px 14px; background: {{ t.surface }}; border-left: 3px solid {{ t.accent }}; font-size: 0.93em; }
   .maint-explain { font-size: 0.82em; color: {{ t.ink_muted }}; margin-top: 6px; }
-  .causes-cell { border-top: 1px solid {{ t.border }}; }
-  .pair-block { margin-top: 8px; }
-  .pair-block.first { margin-top: 0; }
   @media (max-width: 620px) {
     .kpi-tiles, .kpi-tiles tbody, .kpi-tiles tr, .kpi-tiles td { display: block; width: 100% !important; }
     .focus-table, .focus-table tbody, .focus-table tr, .focus-table td { display: block; width: 100% !important; }
@@ -74,12 +71,12 @@
 <div class="focus-card" style="margin-top:16px; background-color:{{ t.surface }}; border-left:4px solid {{ t.accent }};">
 <table class="focus-table" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse; width:100%;">
   <tr>
-    <td width="200" style="vertical-align:top; padding:10px 12px; width:200px;">
+    <td width="150" style="vertical-align:top; padding:14px 12px; width:150px;">
       <div class="card-label" style="font-size:0.7em; font-weight:700; color:{{ t.primary }}; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px;">Machine</div>
       <div style="font-weight:700; color:{{ t.ink }};">{{ m.plant_wc }}</div>
-      <span class="dept-pill" style="display:inline-block; font-size:0.72em; color:{{ t.primary }}; background:{{ t.surface_alt }}; padding:2px 8px; border-radius:10px; margin-top:4px;">{{ m.department }}</span>
+      <span class="dept-pill" style="display:inline-block; font-size:0.72em; color:{{ t.primary }}; background:{{ t.surface_alt }}; padding:2px 8px; border-radius:10px; margin-top:6px;">{{ m.department }}</span>
     </td>
-    <td style="vertical-align:top; padding:10px 12px;">
+    <td width="200" style="vertical-align:top; padding:14px 12px; width:200px;">
       <div class="card-label" style="font-size:0.7em; font-weight:700; color:{{ t.primary }}; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px;">Why</div>
       {% if l %}
       <div style="font-weight:700; color:{{ t.ink }};">{{ l.reasons if l.reasons else l.name }}</div>
@@ -92,25 +89,9 @@
       <div>{{ m.total_sheet_impact | comma_int }} sheets lost vs BSP this week.</div>
       {% endif %}
     </td>
-  </tr>
-  <tr>
-    <td class="causes-cell" colspan="2" style="vertical-align:top; padding:10px 12px; border-top:1px solid {{ t.border }};">
-      <div class="card-label" style="font-size:0.7em; font-weight:700; color:{{ t.primary }}; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px;">Likely Causes and Recommended Actions</div>
-      {% if l and l.action_pairs %}
-      {% for p in l.action_pairs %}
-      <div class="pair-block{% if loop.first %} first{% endif %}" style="margin-top:{{ '0' if loop.first else '8px' }};">
-        {% if p.factor %}
-        <div><strong>Factor {{ loop.index }}:</strong> {{ p.factor }}</div>
-        {% endif %}
-        <div><strong>Action {{ loop.index }}:</strong> {{ p.action }}</div>
-      </div>
-      {% endfor %}
-      {% if m.findings and m.findings.corroborated_sections %}
-      <div class="gc-note" style="margin-top:8px; padding:6px 8px; background:{{ t.attn_bg }}; border-left:3px solid {{ t.attn_rule }}; font-size:0.86em; color:{{ t.attn_text }};">
-        &#9888; Open Graphic Care {{ m.findings.total_open | pluralize('finding') }} on {{ m.findings.corroborated_sections | join(', ') }} may already cover this — check before scheduling new work.
-      </div>
-      {% endif %}
-      {% elif l %}
+    <td width="234" style="vertical-align:top; padding:14px 12px; width:234px;">
+      <div class="card-label" style="font-size:0.7em; font-weight:700; color:{{ t.primary }}; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px;">How to fix</div>
+      {% if l %}
       <div>{{ l.action }}</div>
       {% if m.findings and m.findings.corroborated_sections %}
       <div class="gc-note" style="margin-top:8px; padding:6px 8px; background:{{ t.attn_bg }}; border-left:3px solid {{ t.attn_rule }}; font-size:0.86em; color:{{ t.attn_text }};">
@@ -148,19 +129,11 @@
 </div>
 {% endif %}
 
-{% if digest.last_ack %}
-{{ t.recall_line(digest.last_ack.phrase) }}
-{% endif %}
-
-{% if digest.ack %}
-{{ t.ack_block("Will your plant action these insights this week?", digest.ack) }}
-{% endif %}
-
   </td>
 </tr>
 <tr>
   <td>
-    {{ t.footer("Generated automatically by the OPEX Insight Engine. Do not reply to this email.") }}
+    {{ t.footer("Generated automatically by the Folding Carton Actionable Intelligence Platform. Do not reply to this email.") }}
   </td>
 </tr>
 </table>

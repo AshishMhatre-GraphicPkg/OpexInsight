@@ -8,20 +8,11 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from . import actions
-
-from . import feedback as feedback_mod
-
 if TYPE_CHECKING:
     from .findings import FindingsSummary
     from .pm_compliance import PMSummary
-    from .feedback import AckLinks, LastAck
 
 log = logging.getLogger(__name__)
-
-# V2 manager digest: number of top-impact machines that get a full 3-card
-# (Who/Why/How) treatment; the rest are rolled into a compact "also impacted" list.
-FOCUS_MACHINE_COUNT = 3
 
 # CSV column names (match Qlik STORE output)
 _COL_MANAGER = "Manager_Email"
@@ -54,7 +45,6 @@ _LOWER_IS_BETTER_LEVERS = {
     "Downtime %", "Scrap Loss", "Avg MR Time",
     "Downtime Reason",
     "Avg Blanket Wash Time", "Avg Feeder Trip Time",
-    "Blanket Washes per 10K", "Feeder Trips per 10K",
 }
 
 _TIME_HOURS_LEVERS = {"Avg MR Time", "Avg Blanket Wash Time", "Avg Feeder Trip Time"}
@@ -80,34 +70,6 @@ def _streak_direction(name: str) -> str:
     return "above BSP" if name in _LOWER_IS_BETTER_LEVERS else "below BSP"
 
 
-# Streak_4wk on a Downtime Reason lever is a count of weeks (of the last 4)
-# whose rate exceeded BSP (InsightOpexv1.qvs Section 41B). On every other
-# lever, Streak is a run of consecutive weeks each worse than the week before
-# (InsightOpexv1.qvs:1828-1868, Peek()-based) — not a comparison to BSP and not
-# capped to a fixed window. The two are different measurements; the wording
-# below says only what each one actually supports.
-_BSP_COUNT_STREAK_LEVERS = {"Downtime Reason"}
-
-
-def _streak_phrase(name: str, streak: int, direction: str) -> str:
-    if name in _BSP_COUNT_STREAK_LEVERS:
-        verb = "Above" if direction == "above BSP" else "Below"
-        if streak <= 0:
-            return f"First week {verb.lower()} benchmark in the last 4."
-        if streak >= 4:
-            return f"{verb} benchmark in all 4 of the last 4 weeks."
-        return f"{verb} benchmark in {streak} of the last 4 weeks."
-
-    verb = "Below" if direction == "below BSP" else "Above"
-    if streak <= 0:
-        return f"{verb} benchmark this week — watch next week."
-    if streak == 1:
-        return "Trending worse — first week worse than last."
-    if streak >= 4:
-        return "Trending worse for 4+ weeks straight — needs attention."
-    return f"Trending worse for {streak} weeks straight — needs attention."
-
-
 @dataclass
 class LeverSummary:
     name: str
@@ -119,10 +81,6 @@ class LeverSummary:
     cur_actual: str
     bsp_benchmark: str
     streak_direction: str
-    streak_phrase: str = ""
-    action: str = ""
-    action_is_generic: bool = False
-    action_pairs: list[actions.FactorAction] = field(default_factory=list)
 
 
 @dataclass
@@ -140,8 +98,6 @@ class MachineSummary:
     levers: list[LeverSummary] = field(default_factory=list)
     findings: FindingsSummary | None = None
     pm_summary: PMSummary | None = None
-    plant: str | None = None
-    wc_object_id: str | None = None
 
 
 @dataclass
@@ -163,7 +119,6 @@ class OverviewSummary:
     maint_open: int
     maint_priority10: int
     maint_overdue_pm: int
-    maint_missing_wo: int = 0
 
     @property
     def has_maintenance(self) -> bool:
@@ -177,22 +132,6 @@ class ManagerDigest:
     period_start: str
     machines: list[MachineSummary] = field(default_factory=list)
     overview: OverviewSummary | None = None
-    ack: AckLinks | None = None
-    last_ack: LastAck | None = None
-
-    @property
-    def focus_machines(self) -> list[MachineSummary]:
-        """Top FOCUS_MACHINE_COUNT impacted machines — get the full 3-card treatment.
-
-        `machines` is already sorted Total_Sheet_Impact DESC (group_by_manager),
-        so this is a slice, not a re-sort or re-selection.
-        """
-        return [m for m in self.machines if m.total_sheet_impact > 0][:FOCUS_MACHINE_COUNT]
-
-    @property
-    def other_machines(self) -> list[MachineSummary]:
-        """Remaining impacted machines beyond the focus set — name + sheets only."""
-        return [m for m in self.machines if m.total_sheet_impact > 0][FOCUS_MACHINE_COUNT:]
 
 
 def _build_overview(machines: list) -> OverviewSummary:
@@ -226,7 +165,6 @@ def _build_overview(machines: list) -> OverviewSummary:
     maint_open = sum(m.findings.total_open for m in machines if m.findings)
     maint_p10 = sum(m.findings.high_priority_count for m in machines if m.findings)
     maint_pm = sum(m.pm_summary.total_overdue for m in machines if m.pm_summary)
-    maint_missing_wo = sum(m.findings.total_missing_wo for m in machines if m.findings)
 
     return OverviewSummary(
         total_sheets=total_sheets,
@@ -237,7 +175,6 @@ def _build_overview(machines: list) -> OverviewSummary:
         maint_open=maint_open,
         maint_priority10=maint_p10,
         maint_overdue_pm=maint_pm,
-        maint_missing_wo=maint_missing_wo,
     )
 
 
@@ -248,33 +185,23 @@ def _nan_to_none(val):
 
 
 def _build_levers(row: pd.Series) -> list[LeverSummary]:
-    department = str(row.get(_COL_DEPT, "") or "")
     levers = []
     for i in (1, 2, 3, 4, 5):
         name = _nan_to_none(row.get(f"Lever_{i}_Name"))
         if name is None:
             break
         lever_name = str(name).strip()
-        reasons = _nan_to_none(row.get(f"Lever_{i}_Reasons"))
-        streak = int(row.get(f"Lever_{i}_Streak", 0) or 0)
-        direction = _streak_direction(lever_name)
-        parent_outcome = str(row.get(f"Lever_{i}_Parent_Outcome", "") or "")
-        guidance = actions.lookup_action(lever_name, department, parent_outcome)
         levers.append(
             LeverSummary(
                 name=lever_name,
-                reasons=reasons,
+                reasons=_nan_to_none(row.get(f"Lever_{i}_Reasons")),
                 sheets=float(row.get(f"Lever_{i}_Sheets", 0) or 0),
                 gap_pct=float(row.get(f"Lever_{i}_Gap_Pct", 0) or 0),
-                streak=streak,
-                parent_outcome=parent_outcome,
+                streak=int(row.get(f"Lever_{i}_Streak", 0) or 0),
+                parent_outcome=str(row.get(f"Lever_{i}_Parent_Outcome", "") or ""),
                 cur_actual=_format_kpi_value(lever_name, row.get(f"Lever_{i}_Cur_Actual")),
                 bsp_benchmark=_format_kpi_value(lever_name, row.get(f"Lever_{i}_BSP_Benchmark")),
-                streak_direction=direction,
-                streak_phrase=_streak_phrase(lever_name, streak, direction),
-                action=guidance.action,
-                action_is_generic=guidance.is_generic,
-                action_pairs=guidance.pairs,
+                streak_direction=_streak_direction(lever_name),
             )
         )
     return levers
@@ -291,12 +218,11 @@ def build_machine(
     both digest types build machines identically.
     """
     levers = _build_levers(row)
-    plant = str(row.get("Plant", ""))
-    wc_id = str(row.get("WC Object ID", ""))
-
     machine_findings = None
     if findings_df is not None:
         from .findings import build_summary_for_machine
+        plant = str(row.get("Plant", ""))
+        wc_id = str(row.get("WC Object ID", ""))
         machine_findings = build_summary_for_machine(
             findings_df, plant, wc_id, [lv.name for lv in levers]
         )
@@ -304,6 +230,7 @@ def build_machine(
     machine_pm = None
     if pm_df is not None:
         from .pm_compliance import build_pm_summary_for_machine
+        wc_id = str(row.get("WC Object ID", ""))
         machine_pm = build_pm_summary_for_machine(pm_df, wc_id)
 
     driver_parent = _nan_to_none(row.get(_COL_DRIVER_PARENT))
@@ -324,8 +251,6 @@ def build_machine(
         levers=levers,
         findings=machine_findings,
         pm_summary=machine_pm,
-        plant=plant or None,
-        wc_object_id=wc_id or None,
     )
 
 
@@ -333,18 +258,11 @@ def group_by_manager(
     df: pd.DataFrame,
     findings_df: pd.DataFrame | None = None,
     pm_df: pd.DataFrame | None = None,
-    feedback_cfg: dict | None = None,
-    responses_df: pd.DataFrame | None = None,
 ) -> list[ManagerDigest]:
     """Return one ManagerDigest per unique Manager_Email, ordered by Total_Sheet_Impact DESC.
 
     findings_df: optional pre-parsed Findings.csv DataFrame from findings.load_findings().
     When supplied, attaches a FindingsSummary to each MachineSummary.
-
-    feedback_cfg / responses_df: optional acknowledgement-loop config and
-    parsed responses (feedback.load_responses()). When feedback_cfg is
-    absent/disabled, ManagerDigest.ack and .last_ack stay None and the
-    templates omit the block entirely.
     """
     if _COL_MANAGER not in df.columns:
         raise ValueError(f"CSV missing column '{_COL_MANAGER}'")
@@ -378,8 +296,6 @@ def group_by_manager(
                 period_start=period,
                 machines=machines,
                 overview=_build_overview(machines),
-                ack=feedback_mod.build_ack_links(feedback_cfg, "P", period, str(email)),
-                last_ack=feedback_mod.last_ack_for(responses_df, "P", str(email), period),
             )
         )
 

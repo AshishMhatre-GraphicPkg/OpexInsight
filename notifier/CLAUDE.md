@@ -62,8 +62,10 @@ src/
   routing_check.py       # find_routing_mismatches(df) → list[str], from Routing_Match_Level
   findings.py            # Pure: load_findings(), build_summary_for_machine() → FindingsSummary | None
   pm_compliance.py       # Pure: load_pm_compliance(), build_pm_summary_for_machine() → PMSummary | None
+  feedback.py            # Pure: digest acknowledgement loop — encode_token/parse_token, build_ack_links(),
+                          # load_responses(), last_ack_for() → LastAck | None. See "Acknowledgement loop" below.
   actions.py             # Pure: load_action_lookup(), lookup_action() → ActionGuidance (see "Manager digest V2" below)
-  data/Reason_Category_Action_Lookup.xlsx  # Static reference table actions.py loads (shipped as package data)
+  data/Reason_Category_Action_Lookup.xlsx  # Static reference table actions.py loads (shipped as package data) — 8 main-lever rows, Sheetfed Printing only
   renderer.py            # Jinja2 wrappers: render_html/text, render_regional_html/text, render_admin_alert
   mailer.py              # Graph API: _post_with_retry (3 attempts, exp backoff), send_mail, send_admin_alert
   logging_setup.py       # configure() called once at startup
@@ -88,7 +90,8 @@ tests/
   test_renderer.py        # Assertion-style template tests, plant + regional (no network, no snapshots)
   test_freshness.py
 config.yaml   # sharepoint_site_id, sharepoint_file_path, sharepoint_findings_path, sharepoint_pm_path,
-              # sender_upn, admin_email, email_subject_prefix, regional_subject_prefix, regional_top_n
+              # sender_upn, admin_email, email_subject_prefix, regional_subject_prefix, regional_top_n,
+              # feedback (acknowledgement loop — see below, disabled by default)
 .env          # AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET (gitignored)
 ```
 
@@ -115,7 +118,9 @@ SharePoint
                                                               ├─► group_by_manager ─────────► ManagerDigest[]
                                                               └─► group_by_regional_manager ─► RegionalDigest[]
   Findings.csv ────────────► fetch_findings_csv ──► load_findings ──► findings_df ────────────────┤ (both groupers)
-  PMComplianceDump.xlsx ───► fetch_pm_xlsx ──► load_pm_compliance ──► pm_df ───────────────────────┘ (both groupers)
+  PMComplianceDump.xlsx ───► fetch_pm_xlsx ──► load_pm_compliance ──► pm_df ───────────────────────┤ (both groupers)
+  Insight_Feedback.xlsx ───► fetch_feedback_xlsx ──► load_responses ──► responses_df ───────────────┘ (both groupers,
+                                                                                                        if feedback.enabled)
                                                                                      │
                                                            build_machine() — shared by both groupers, calls:
                                                            build_summary_for_machine (findings, per machine)
@@ -273,6 +278,89 @@ class PMSummary:
 
 `build_pm_summary_for_machine` returns `None` when no Urgency=1 rows match — template omits the block entirely.
 
+### Acknowledgement loop (`feedback.py`)
+
+Captures a digest-level Yes/No ("will your plant action these insights this
+week?") plus an optional comment, at minimum click friction, without any new
+Azure permission or hosted component. See `README.md` → "Digest
+acknowledgement loop" for the Form setup runbook.
+
+**Why a Microsoft Form, not a hosted endpoint:** the Azure AD app
+registration holds `Mail.Send` + `Sites.Read.All` — read-only on SharePoint.
+Every SharePoint call in this codebase is a `GET`; the only `POST` is
+`mailer.py`'s `/sendMail`. There is no web framework dependency and no
+inbound HTTP surface anywhere in the repo — `main.py` is a batch CLI run by
+hand or by an external scheduler (see "Deployment" in `README.md`). A
+click-to-acknowledge endpoint would make response capture the project's
+first always-on deployed component. A **group** Form on the existing
+SharePoint site needs none of that: it's a receiver the tenant already
+hosts, and its results workbook syncs to Excel in the same document library
+`fetch.py` already reads.
+
+**Identity token**, plain text so the results workbook stays readable:
+`"<kind>|<period_start>|<email>"`, e.g. `"P|2026-04-20|manager.a@x.com"`.
+`kind` is `"P"` (plant digest) or `"R"` (regional digest) — the prefix
+exists so a person who is both a plant and a regional manager never
+collides across digest types for the same week. This is deliberately **not**
+`Insight_ID`: that ID is per-KPI grain and is collapsed away at the
+`MachineWeekSummary_Base` roll-up (`InsightOpexv1.qvs`, `LOAD DISTINCT
+Plant, [WC Object ID], [Plant - WC], Department, Period_Start`), so it never
+reaches `MachineWeekSummary.csv` — Plant+WC+Week is the grain the CSV
+actually carries, and manager+week is the grain the ack needs.
+
+```python
+@dataclass
+class AckLinks:
+    yes_url: str
+    no_url: str
+    yes_label: str
+    no_label: str
+
+@dataclass
+class LastAck:
+    answered: bool
+    answer: str | None        # "Yes" | "No" | None
+    submitted_at: str | None
+    phrase: str                # rendered English — templates render this directly
+```
+
+- `build_ack_links(feedback_cfg, kind, period_start, email)` → `AckLinks |
+  None`. Returns `None` whenever `feedback_cfg` is falsy, `enabled` is
+  false, or any required URL param is blank — the feature is **off by
+  default**, and `ManagerDigest.ack` / `RegionalDigest.ack` staying `None`
+  is what makes the templates omit the block entirely.
+- `load_responses(xlsx_bytes, feedback_cfg)` → normalised DataFrame
+  (`token, kind, period_start, email, answer, comment, submitted_at`). Rows
+  whose token doesn't parse are dropped, never raised — malformed Forms
+  data must not break a run.
+- `last_ack_for(responses_df, kind, email, period_start)` → `LastAck | None`.
+  Looks up the **prior** week (`period_start − 7 days`); `None` means the
+  loop wasn't live that week (`responses_df is None`), so nothing renders on
+  the very first run rather than a misleading "no response."
+- `ack_stats(responses_df, period_start)` — one admin-log line per run
+  (`main.py`), not surfaced to managers.
+- Both `group_by_manager()` and `group_by_regional_manager()` take
+  `feedback_cfg=None, responses_df=None` as the last two params (default
+  `None`, so every pre-existing call site and test is unaffected) and pass
+  `kind="P"` / `kind="R"` respectively into `build_ack_links` /
+  `last_ack_for`.
+- `MachineSummary` also gained `plant` / `wc_object_id` fields —
+  `build_machine()` already read both as findings/PM join keys and
+  discarded them; they're now persisted, which is the whole prerequisite
+  for a future per-machine (not just per-digest) ack.
+- Rendering: `templates/_theme.j2` macros `ack_block(question, links)` and
+  `recall_line(text)` — bulletproof HTML-table buttons (no VML, matches the
+  file's existing rule that nothing load-bearing lives in `<style>`).
+  `email.html.j2` / `email.txt.j2` and `regional.html.j2` / `regional.txt.j2`
+  render the recall line (if `digest.last_ack`) above the buttons (if
+  `digest.ack`), just before the footer. `regional.html.j2` did not
+  previously import `_theme.j2` (it hardcodes hex inline, a known
+  pre-existing gap) — it now does, scoped to this one block.
+- Fetch (`fetch.py: fetch_feedback_xlsx`) and orchestration (`main.py`)
+  follow the exact same non-fatal pattern as Findings/PM: try, log, send one
+  admin alert, continue with `responses_df = None` — a broken feedback
+  workbook must never block digests from sending.
+
 ### Section → Lever corroboration (`SECTION_TO_LEVER_KEYWORDS` in `findings.py`)
 
 Maps `G.Section` values to keywords searched (case-insensitive) in lever names. Currently seeded with four sections; extend once the full `G.Section` value list is confirmed — no schema change needed.
@@ -327,22 +415,40 @@ computes everything; V2 only changes how much of it the template shows.
   (sheets), name (sheets)…" line. Only `levers[0]` (the top lever) is shown
   per focus machine — levers 2–5 are still on `MachineSummary.levers` (used
   by `regional.py` and available for a future drill-down) but not rendered.
-- **Card 3 (How to Fix) action text comes from `src/actions.py`** —
-  `lookup_action(lever.reasons or lever.name, ...)` against
-  `src/data/Reason_Category_Action_Lookup.xlsx` ("Reason Lookup" sheet,
-  key = `Lever / Reason`, action = `How the Plant Team Can Help`). Loaded
-  once via `lru_cache`; any load/lookup failure degrades to a generic
-  fallback sentence rather than raising, because `build_machine()` is shared
-  with `regional.py` — an exception here must not break the regional digest
-  too. ~26% of the lookup's rows carry a "not yet mapped" placeholder; those
-  are detected by prefix and swapped for the same generic fallback rather
-  than rendered verbatim (the real text is aimed at the lookup's maintainer,
-  not the plant manager). `actions.log_unmapped_summary()` logs a per-run
-  count of generic-fallback hits so the lookup can be improved over time.
-  When a machine's findings are corroborated with its top lever
-  (`FindingsSummary.corroborated_sections`, unchanged logic from
-  `findings.py`), Card 3 adds an amber note pointing at the open Graphic
-  Care finding instead of duplicating a separate findings block.
+- **Card 3 ("Likely Causes and Recommended Actions") comes from `src/actions.py`** —
+  `lookup_action(lever.name, department, parent_outcome)` against
+  `src/data/Reason_Category_Action_Lookup.xlsx` ("Reason Lookup" sheet). The
+  lookup has one row per **(Department, Lever / Reason)** pair — currently 8
+  rows, all `Department = Sheetfed Printing`, one per main lever (Speed,
+  Downtime %, Scrap Loss, Avg MR Time, Avg Blanket Wash Time, Avg Feeder Trip
+  Time, Blanket Washes per 10K, Feeder Trips per 10K). Each row carries up to
+  3 `Common Contributing Factor N` / `Typical Actions N` pairs
+  (`ActionGuidance.pairs: list[FactorAction]`); a pair is dropped only when
+  both its factor and action are blank (the `Downtime %` row has just
+  `Typical Actions 1`, no factor, and renders as a single unlabeled action
+  line). Matching is **strict on Department** — a lever that matches for
+  Sheetfed Printing does not match for Gluer/Web Cutting/Window/Sheetfed
+  Cutting; those machines get the generic fallback sentence until their
+  department's rows are added to the workbook. A Downtime Reason sub-lever
+  (`Lever_N_Name == "Downtime Reason"`, e.g. a specific reason code) has no
+  row of its own — it resolves via `Lever_N_Parent_Outcome` (`"Downtime %"`)
+  instead. Loaded once via `lru_cache`; any load/lookup failure or a
+  department/lever miss degrades to the generic fallback sentence
+  (`ActionGuidance.action`, `pairs=[]`) rather than raising, because
+  `build_machine()` is shared with `regional.py` — an exception here must not
+  break the regional digest too. `actions.log_unmapped_summary()` logs a
+  per-run count of generic-fallback hits (now dominated by non-Sheetfed
+  department misses) so lookup coverage can be extended over time. Card 3
+  renders a `FACTOR N` / `ACTION N` label pair per `LeverSummary.action_pairs`
+  entry (skipping the Factor line when blank), stacked full-width beneath a
+  compact Machine + Why row — `LeverSummary.action` still carries the single
+  first-pair sentence for the plain-text mirror's fallback path and other
+  non-pair consumers. When a machine's findings are corroborated with its top
+  lever (`FindingsSummary.corroborated_sections`, unchanged logic from
+  `findings.py`), Card 3 adds an amber note below the pairs pointing at the
+  open Graphic Care finding instead of duplicating a separate findings block.
+  Pre-redesign single-sentence Card 3 (3-column Machine/Why/How-to-Fix row) is
+  archived at `templates/archive/manager_v2.{html,txt}.j2`.
 - **`LeverSummary.streak_phrase`** replaces the old literal `"{{ streak }}/4
   weeks {{ direction }}"` wording, which was wrong for every lever except
   Downtime Reason. `Streak_4wk` means two different things depending on the
