@@ -47,6 +47,22 @@ SET vFactQVD        = 'lib://Data - PP:DataFiles/Models/Asset Utilization/model 
 SET vSummaryQVDPath = 'lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/MachineWeekSummary.qvd';
 SET vSummaryCSVPath = 'lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/MachineWeekSummary.csv';
 
+// ---- KBA machine-log feeder trips (Section 7C) ----
+// Scoped to KBA presses only. File is overwritten each week (one week, no history).
+SET vKBAJobMixPath = 'lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/KBAlogFile/KBA_JobMix_Weekly.csv';
+// KBA scope = Manufacturer matches any pattern below AND Department = vKBA_Department
+LET vKBA_MfrMatch   = Chr(39) & '*KBA*' & Chr(39) & ',' & Chr(39) & '*Koenig*' & Chr(39);
+SET vKBA_Department = Sheetfed Printing;
+// Helper macros: numeric value or Null for a cell / 1 when a non-blank cell is not numeric
+SET vKBA_Num = If(IsNum($1), $1, Null());
+SET vKBA_NN  = If(Len(Trim($1)) > 0 AND Not IsNum($1), 1, 0);
+
+// ===== KBA-DIAG START =====
+LET vKBADiag_LW = Date($(vLastWeekStart));
+TRACE [KBA-DIAG] Step1: vKBAJobMixPath = $(vKBAJobMixPath);
+TRACE [KBA-DIAG] Step1: vKBA_MfrMatch = $(vKBA_MfrMatch)   vKBA_Department = $(vKBA_Department)   vLastWeekStart = $(vKBADiag_LW);
+// ===== KBA-DIAG END =====
+
 
 
 
@@ -386,6 +402,214 @@ MAPPING LOAD
     Regional_Manager
 FROM [lib://Shared Connections:Office_365_Sharepoint - Reporting - User Defined Credentials/BSS_AMC_MFG/Master Data/Control Room/Qlikcloud Lookups/OPEXinsights/PlantManagers.xlsx]
 (ooxml, embedded labels, table is PlantManagers);
+
+
+// ============================================================
+// SECTION 7C: KBA MACHINE-LOG FEEDER TRIPS — LOAD + SCOPE
+// KBA_JobMix_Weekly.csv: one row per Week + Plant + Work Center +
+// Board Type + Board Caliper (Grain Level = 'Unattributed' rows have no
+// Board Type / Caliper). Expected Trips = Feeder Rate per Run Hour x Run Hours.
+//
+//   KBA_WCObj_Map : Plant(4-digit)|Work Center -> WC Object ID
+//   KBA_Scope_Map : WC Object ID -> 1 when Manufacturer matches vKBA_MfrMatch
+//                   AND Department = vKBA_Department
+//   KBA_JobMix    : file rows + resolved WC Object ID + scope + attributed flag
+//
+// Step 2 only loads and flags — nothing here feeds any KPI yet. All fields
+// carry a KBA_ prefix, so no association or synthetic key forms with the model.
+// ErrorMode = 0 for this block only, so a KBA file problem can never abort
+// the insight reload. It is reset to 1 at the end of the block.
+// ============================================================
+
+SET ErrorMode = 0;
+
+KBA_WCObj_Map:
+MAPPING LOAD
+    Right('0000' & Trim(Plant), 4) & '|' & Trim(Text("Work Center")),
+    "WC Object ID"
+FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - WcAttributes.qvd]
+(qvd)
+WHERE Len(Trim(Text("Work Center"))) > 0;
+
+KBA_Scope_Map:
+MAPPING LOAD
+    "WC Object ID",
+    1
+RESIDENT WcAttributes
+WHERE WildMatch(Manufacturer, $(vKBA_MfrMatch))
+  AND ApplyMap('Department_Map', "WC Object ID", '') = '$(vKBA_Department)';
+
+KBA_JobMix:
+NoConcatenate
+LOAD
+    KBA_WeekDate,
+    Num(WeekStart(KBA_WeekDate, 0, $(vWeekStartDay)))                                              as KBA_WeekStart,
+    If(WeekStart(KBA_WeekDate, 0, $(vWeekStartDay)) = KBA_WeekDate, 1, 0)                          as KBA_WeekIsMonday,
+    KBA_Plant,
+    KBA_WorkCenter,
+    ApplyMap('KBA_WCObj_Map', KBA_Plant & '|' & KBA_WorkCenter, Null())                            as KBA_WCObjectID,
+    ApplyMap('KBA_Scope_Map',
+        ApplyMap('KBA_WCObj_Map', KBA_Plant & '|' & KBA_WorkCenter, Null()), 0)                    as KBA_InScope,
+    KBA_BoardType,
+    KBA_BoardCaliper,
+    KBA_GrainLevel,
+    // Only rows tied to a real Board Type + Caliper count (Unattributed rows are excluded downstream)
+    If(KBA_GrainLevel = 'BoardType+Caliper'
+        AND Not IsNull(KBA_BoardType) AND Not IsNull(KBA_BoardCaliper), 1, 0)                      as KBA_IsAttributed,
+    KBA_FeederActual,
+    KBA_FeederExpected,
+    KBA_FeederRate,
+    KBA_FeederMESHours,
+    KBA_FeederRunHours,
+    KBA_NonNumericCount
+;
+LOAD
+    Date#(Text(Trim([Week Start Date])), 'M/D/YYYY')                                               as KBA_WeekDate,
+    Right('0000' & Trim(Text(Plant)), 4)                                                           as KBA_Plant,
+    Trim(Text([Work Center]))                                                                      as KBA_WorkCenter,
+    $(vKBA_Num([Board Type]))                                                                      as KBA_BoardType,
+    $(vKBA_Num([Board Caliper]))                                                                   as KBA_BoardCaliper,
+    Trim([Grain Level])                                                                            as KBA_GrainLevel,
+    $(vKBA_Num([Feeder Actual Trips]))                                                             as KBA_FeederActual,
+    $(vKBA_Num([Feeder Expected Trips]))                                                           as KBA_FeederExpected,
+    $(vKBA_Num([Feeder Rate per Run Hour]))                                                        as KBA_FeederRate,
+    $(vKBA_Num([Feeder Total MES Hours]))                                                          as KBA_FeederMESHours,
+    $(vKBA_Num([Feeder Run Hours]))                                                                as KBA_FeederRunHours,
+      $(vKBA_NN([Feeder Actual Trips]))   + $(vKBA_NN([Feeder Expected Trips]))
+    + $(vKBA_NN([Feeder Rate per Run Hour])) + $(vKBA_NN([Feeder Total MES Hours]))
+    + $(vKBA_NN([Feeder Run Hours]))                                                               as KBA_NonNumericCount
+FROM [$(vKBAJobMixPath)]
+(txt, utf8, embedded labels, delimiter is ',', msq);
+
+// ===== KBA-DIAG START =====
+// ---- B1: Plant|Work Center -> WC Object ID map (a duplicate key silently keeps one value) ----
+_KBADiag_KeyChk:
+NoConcatenate
+LOAD
+    Right('0000' & Trim(Plant), 4) & '|' & Trim(Text("Work Center"))                              as _k,
+    Count(1)                                                                                      as _c
+FROM [lib://Data - PP:DataFiles/Models/Asset Utilization/model Asset Utilization - WcAttributes.qvd]
+(qvd)
+WHERE Len(Trim(Text("Work Center"))) > 0
+GROUP BY Right('0000' & Trim(Plant), 4) & '|' & Trim(Text("Work Center"));
+
+_KBADiag_Agg1:
+NoConcatenate
+LOAD Count(1) as _keys, Sum(_c) as _rows, Sum(If(_c > 1, 1, 0)) as _dupKeys
+RESIDENT _KBADiag_KeyChk;
+
+LET vKBADiag_Keys    = Alt(Peek('_keys',    0, '_KBADiag_Agg1'), 0);
+LET vKBADiag_KeyRows = Alt(Peek('_rows',    0, '_KBADiag_Agg1'), 0);
+LET vKBADiag_DupKeys = Alt(Peek('_dupKeys', 0, '_KBADiag_Agg1'), 0);
+TRACE [KBA-DIAG] 7C-B1 KBA_WCObj_Map: source rows = $(vKBADiag_KeyRows)   distinct Plant|WorkCenter keys = $(vKBADiag_Keys)   duplicated keys = $(vKBADiag_DupKeys) (expect 0);
+
+// ---- B2: scope (Manufacturer + Department) ----
+_KBADiag_Agg2:
+NoConcatenate
+LOAD
+    Count(1)                                                                                       as _wcAll,
+    Sum(If(ApplyMap('Department_Map', "WC Object ID", '') = '$(vKBA_Department)', 1, 0))           as _wcDept,
+    Sum(If(ApplyMap('KBA_Scope_Map', "WC Object ID", 0) = 1, 1, 0))                               as _wcScope
+RESIDENT WcAttributes;
+
+LET vKBADiag_wcAll   = Alt(Peek('_wcAll',   0, '_KBADiag_Agg2'), 0);
+LET vKBADiag_wcDept  = Alt(Peek('_wcDept',  0, '_KBADiag_Agg2'), 0);
+LET vKBADiag_wcScope = Alt(Peek('_wcScope', 0, '_KBADiag_Agg2'), 0);
+TRACE [KBA-DIAG] 7C-B2 WcAttributes WCs = $(vKBADiag_wcAll)   in department $(vKBA_Department) = $(vKBADiag_wcDept)   KBA in-scope WCs = $(vKBADiag_wcScope);
+
+_KBADiag_Mfr:
+NoConcatenate
+LOAD
+    Manufacturer                                                                                   as _mfr,
+    Count(1)                                                                                       as _n
+RESIDENT WcAttributes
+WHERE ApplyMap('Department_Map', "WC Object ID", '') = '$(vKBA_Department)'
+GROUP BY Manufacturer;
+
+LET vKBADiag_nMfr = Alt(NoOfRows('_KBADiag_Mfr'), 0);
+FOR vKBADiag_i = 0 TO $(vKBADiag_nMfr) - 1
+    LET vKBADiag_M = Peek('_mfr', $(vKBADiag_i), '_KBADiag_Mfr');
+    LET vKBADiag_M = If(Len('$(vKBADiag_M)') = 0, '(blank)', '$(vKBADiag_M)');
+    LET vKBADiag_N = Peek('_n', $(vKBADiag_i), '_KBADiag_Mfr');
+    TRACE [KBA-DIAG] 7C-B2 Manufacturer in department $(vKBA_Department): $(vKBADiag_M) = $(vKBADiag_N) WCs;
+NEXT vKBADiag_i
+
+// ---- B3: KBA_JobMix load ----
+_KBADiag_Agg3:
+NoConcatenate
+LOAD
+    Count(1)                                                                                       as _n,
+    Min(KBA_WeekStart)                                                                             as _minWk,
+    Max(KBA_WeekStart)                                                                             as _maxWk,
+    Sum(If(KBA_WeekIsMonday = 0, 1, 0))                                                            as _nonMon,
+    Sum(If(IsNull(KBA_WCObjectID), 1, 0))                                                          as _unres,
+    Sum(If(KBA_InScope = 1, 1, 0))                                                                 as _inScope,
+    Sum(KBA_IsAttributed)                                                                          as _attr,
+    Sum(If(KBA_NonNumericCount > 0, 1, 0))                                                         as _nonNum,
+    Sum(If(KBA_IsAttributed = 1 AND Fabs(KBA_FeederExpected - KBA_FeederRate * KBA_FeederRunHours) > 0.001, 1, 0)) as _expBad,
+    Sum(If(KBA_FeederRunHours > KBA_FeederMESHours, 1, 0))                                         as _runGtMes,
+    Sum(If(KBA_IsAttributed = 1 AND KBA_FeederActual > 0 AND KBA_FeederRunHours = 0, 1, 0))        as _tripsNoRun,
+    Sum(If(KBA_IsAttributed = 1, KBA_FeederActual, 0))                                             as _actAttr,
+    Sum(KBA_FeederActual)                                                                          as _actAll
+RESIDENT KBA_JobMix;
+
+LET vKBADiag_n      = Alt(Peek('_n',        0, '_KBADiag_Agg3'), 0);
+LET vKBADiag_minWk  = Date(Peek('_minWk',   0, '_KBADiag_Agg3'));
+LET vKBADiag_maxWk  = Date(Peek('_maxWk',   0, '_KBADiag_Agg3'));
+LET vKBADiag_nonMon = Alt(Peek('_nonMon',   0, '_KBADiag_Agg3'), 0);
+LET vKBADiag_unres  = Alt(Peek('_unres',    0, '_KBADiag_Agg3'), 0);
+LET vKBADiag_inSc   = Alt(Peek('_inScope',  0, '_KBADiag_Agg3'), 0);
+LET vKBADiag_attr   = Alt(Peek('_attr',     0, '_KBADiag_Agg3'), 0);
+LET vKBADiag_nonNum = Alt(Peek('_nonNum',   0, '_KBADiag_Agg3'), 0);
+LET vKBADiag_expBad = Alt(Peek('_expBad',   0, '_KBADiag_Agg3'), 0);
+LET vKBADiag_runMes = Alt(Peek('_runGtMes', 0, '_KBADiag_Agg3'), 0);
+LET vKBADiag_noRun  = Alt(Peek('_tripsNoRun', 0, '_KBADiag_Agg3'), 0);
+LET vKBADiag_actA   = Alt(Peek('_actAttr',  0, '_KBADiag_Agg3'), 0);
+LET vKBADiag_actAll = Alt(Peek('_actAll',   0, '_KBADiag_Agg3'), 0);
+LET vKBADiag_Err    = $(ScriptErrorCount);
+TRACE [KBA-DIAG] 7C-B3 KBA_JobMix rows = $(vKBADiag_n) (compare with the CSV row count of 166)   weeks $(vKBADiag_minWk) .. $(vKBADiag_maxWk)   non-Monday rows = $(vKBADiag_nonMon) (expect 0);
+TRACE [KBA-DIAG] 7C-B3 attributed rows = $(vKBADiag_attr)   rows with unresolved WC Object ID = $(vKBADiag_unres)   in-scope rows = $(vKBADiag_inSc)   rows with non-numeric cells = $(vKBADiag_nonNum) (expect 0);
+TRACE [KBA-DIAG] 7C-B3 attributed rows where Expected differs from Rate x RunHours = $(vKBADiag_expBad) (expect 0)   rows with RunHours > MESHours = $(vKBADiag_runMes) (expect 0)   attributed rows with trips but zero run hours = $(vKBADiag_noRun);
+TRACE [KBA-DIAG] 7C-B3 feeder trips: attributed rows = $(vKBADiag_actA)   all rows = $(vKBADiag_actAll)   ScriptErrorCount so far = $(vKBADiag_Err);
+
+// ---- B4: one line per Plant|Work Center, with the verdict Step 4 will apply ----
+_KBADiag_Mach:
+NoConcatenate
+LOAD
+    KBA_Plant & '|' & KBA_WorkCenter                                                               as _pw,
+    Only(KBA_WCObjectID)                                                                           as _wc,
+    Max(KBA_InScope)                                                                               as _sc,
+    Count(1)                                                                                       as _rows,
+    Sum(KBA_IsAttributed)                                                                          as _attrRows,
+    Sum(If(KBA_IsAttributed = 1, KBA_FeederActual, 0))                                             as _act,
+    Sum(If(KBA_IsAttributed = 1, KBA_FeederExpected, 0))                                           as _exp,
+    Sum(If(KBA_IsAttributed = 1, KBA_FeederRunHours, 0))                                           as _run,
+    Sum(If(KBA_IsAttributed = 1, KBA_FeederMESHours, 0))                                           as _mes
+RESIDENT KBA_JobMix
+GROUP BY KBA_Plant & '|' & KBA_WorkCenter;
+
+LET vKBADiag_nM = Alt(NoOfRows('_KBADiag_Mach'), 0);
+TRACE [KBA-DIAG] 7C-B4 machines in file = $(vKBADiag_nM)   (attributed rows only: trips actual / expected, run hours, MES hours);
+FOR vKBADiag_i = 0 TO $(vKBADiag_nM) - 1
+    LET vKBADiag_pw  = Peek('_pw', $(vKBADiag_i), '_KBADiag_Mach');
+    LET vKBADiag_wc  = Peek('_wc', $(vKBADiag_i), '_KBADiag_Mach');
+    LET vKBADiag_sc  = Alt(Peek('_sc',       $(vKBADiag_i), '_KBADiag_Mach'), 0);
+    LET vKBADiag_ar  = Alt(Peek('_attrRows', $(vKBADiag_i), '_KBADiag_Mach'), 0);
+    LET vKBADiag_act = Alt(Peek('_act',      $(vKBADiag_i), '_KBADiag_Mach'), 0);
+    LET vKBADiag_exp = Alt(Round(Peek('_exp', $(vKBADiag_i), '_KBADiag_Mach'), 0.1), 0);
+    LET vKBADiag_run = Alt(Round(Peek('_run', $(vKBADiag_i), '_KBADiag_Mach'), 0.1), 0);
+    LET vKBADiag_mes = Alt(Round(Peek('_mes', $(vKBADiag_i), '_KBADiag_Mach'), 0.1), 0);
+    LET vKBADiag_st  = If(Len('$(vKBADiag_wc)') = 0, 'UNRESOLVED',
+                        If($(vKBADiag_sc) = 0, 'out of scope',
+                          If($(vKBADiag_ar) = 0, 'no attributed rows - legacy',
+                            If($(vKBADiag_act) = 0, 'zero actual - legacy', 'candidate'))));
+    TRACE [KBA-DIAG] 7C-B4 $(vKBADiag_pw)   WCObj=$(vKBADiag_wc)   attrRows=$(vKBADiag_ar)   actual=$(vKBADiag_act)   expected=$(vKBADiag_exp)   run=$(vKBADiag_run)   mes=$(vKBADiag_mes)   =>  $(vKBADiag_st);
+NEXT vKBADiag_i
+
+DROP TABLES _KBADiag_KeyChk, _KBADiag_Agg1, _KBADiag_Agg2, _KBADiag_Mfr, _KBADiag_Agg3, _KBADiag_Mach;
+// ===== KBA-DIAG END =====
+
+SET ErrorMode = 1;
 
 
 ///$tab Step 3
