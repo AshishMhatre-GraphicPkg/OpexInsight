@@ -53,6 +53,9 @@ SET vKBAJobMixPath = 'lib://Shared Connections:Office_365_Sharepoint - Reporting
 // KBA scope = Manufacturer matches any pattern below AND Department = vKBA_Department
 LET vKBA_MfrMatch   = Chr(39) & '*KBA*' & Chr(39) & ',' & Chr(39) & '*Koenig*' & Chr(39);
 SET vKBA_Department = Sheetfed Printing;
+// A KBA machine may use the KBA feeder KPI only if KBA attributed run hours / model run hours is in this range
+SET vKBA_HoursMin = 0.8;
+SET vKBA_HoursMax = 1.2;
 // Helper macros: numeric value or Null for a cell / 1 when a non-blank cell is not numeric
 SET vKBA_Num = If(IsNum($1), $1, Null());
 SET vKBA_NN  = If(Len(Trim($1)) > 0 AND Not IsNum($1), 1, 0);
@@ -655,7 +658,11 @@ where Date >= '1/1/2025'
     AND Match("WC Object ID",
         10005999, 10003311, 10003313, 10003312, 10003314,
         10002336, 10002335, 10002334, 10002333, 10002332,
-        10006627, 10003975, 10004076);
+        10006627, 10003975, 10004076,
+        // KBA-TEST: KBA Sheetfed candidate machines added so the KBA feeder swap can be tested
+        // (temporary test list, to be reviewed with the 13-WC filter above before production)
+        10005832, 10006601, 10006446, 10001124, 10006371, 10004552,
+        10004551, 10004881, 10004882, 10004884, 10004885, 10004886);
 
 
 // ============================================================
@@ -2192,6 +2199,73 @@ DROP TABLE JobFact_Scoring;
 
 
 // ============================================================
+// SECTION 33K: KBA — MODEL RUN HOURS LOOKUP (additive only)
+// WeeklyMachineKPI is dropped in Section 34, so the model's weekly run
+// hours per machine are captured here as a MAPPING table (cannot multiply
+// rows) to reconcile against the KBA file's Run Hours.
+// Key: Plant(4-digit)|WC Object ID|WeekStart(numeric). No existing table or
+// field is changed.
+// ============================================================
+
+SET ErrorMode = 0;
+
+KBA_QVD_RunHours_Map:
+MAPPING LOAD
+    Right('0000' & Trim(Plant), 4) & '|' & [WC Object ID] & '|' & Num(WeekStart),
+    Wk_RunHours
+RESIDENT WeeklyMachineKPI;
+
+// ===== KBA-DIAG START =====
+// ---- file week vs the script's last complete week ----
+_KBADiag_Wk:
+NoConcatenate
+LOAD
+    Min(KBA_WeekStart)                                                                             as _minWk,
+    Max(KBA_WeekStart)                                                                             as _maxWk
+RESIDENT KBA_JobMix;
+LET vKBADiag_fMin = Alt(Peek('_minWk', 0, '_KBADiag_Wk'), 0);
+LET vKBADiag_fMax = Alt(Peek('_maxWk', 0, '_KBADiag_Wk'), 0);
+LET vKBADiag_fMinD = Date($(vKBADiag_fMin));
+LET vKBADiag_fMaxD = Date($(vKBADiag_fMax));
+LET vKBADiag_lwD   = Date($(vLastWeekStart));
+LET vKBADiag_wkOK  = If($(vKBADiag_fMin) = $(vKBADiag_fMax) AND $(vKBADiag_fMax) = $(vLastWeekStart), 'MATCH - KBA path allowed', 'STALE - KBA machines would fall back to legacy');
+TRACE [KBA-DIAG] 33K file week = $(vKBADiag_fMinD) .. $(vKBADiag_fMaxD)   vLastWeekStart = $(vKBADiag_lwD)   =>  $(vKBADiag_wkOK);
+
+// ---- KBA Run Hours vs model run hours, per resolved machine, for the file week ----
+_KBADiag_Hrs:
+NoConcatenate
+LOAD
+    KBA_Plant & '|' & KBA_WorkCenter                                                               as _pw,
+    Only(KBA_WCObjectID)                                                                           as _wc,
+    Sum(If(KBA_IsAttributed = 1, KBA_FeederRunHours, 0))                                           as _kbaAttr,
+    Sum(KBA_FeederRunHours)                                                                        as _kbaAll,
+    Sum(If(KBA_IsAttributed = 1, KBA_FeederActual, 0))                                             as _act,
+    Sum(If(KBA_IsAttributed = 1, KBA_FeederExpected, 0))                                           as _exp,
+    Max(ApplyMap('KBA_QVD_RunHours_Map', KBA_Plant & '|' & KBA_WCObjectID & '|' & KBA_WeekStart, -1)) as _model
+RESIDENT KBA_JobMix
+WHERE Not IsNull(KBA_WCObjectID) AND KBA_InScope = 1
+GROUP BY KBA_Plant & '|' & KBA_WorkCenter;
+
+LET vKBADiag_nH = Alt(NoOfRows('_KBADiag_Hrs'), 0);
+TRACE [KBA-DIAG] 33K in-scope resolved KBA machines = $(vKBADiag_nH)   (run hours: KBA attributed / KBA all rows / model, ratio = KBA attributed / model);
+FOR vKBADiag_i = 0 TO $(vKBADiag_nH) - 1
+    LET vKBADiag_pw = Peek('_pw', $(vKBADiag_i), '_KBADiag_Hrs');
+    LET vKBADiag_wc = Peek('_wc', $(vKBADiag_i), '_KBADiag_Hrs');
+    LET vKBADiag_ka = Alt(Round(Peek('_kbaAttr', $(vKBADiag_i), '_KBADiag_Hrs'), 0.1), 0);
+    LET vKBADiag_kl = Alt(Round(Peek('_kbaAll',  $(vKBADiag_i), '_KBADiag_Hrs'), 0.1), 0);
+    LET vKBADiag_mo = Alt(Peek('_model', $(vKBADiag_i), '_KBADiag_Hrs'), -1);
+    LET vKBADiag_mt = If($(vKBADiag_mo) = -1, 'machine-week not in model', Round($(vKBADiag_mo), 0.1) & ' hrs   ratio ' & Round($(vKBADiag_ka) / $(vKBADiag_mo), 0.01));
+    TRACE [KBA-DIAG] 33K $(vKBADiag_pw)   WCObj=$(vKBADiag_wc)   KBA attributed = $(vKBADiag_ka)   KBA all = $(vKBADiag_kl)   model = $(vKBADiag_mt);
+NEXT vKBADiag_i
+
+DROP TABLES _KBADiag_Wk, _KBADiag_Hrs;
+// ===== KBA-DIAG END =====
+
+SET ErrorMode = 1;
+
+
+
+// ============================================================
 // SECTION 34: SORT FOR STREAK CALCULATION
 // Must sort by Plant + WC Object ID + WeekStart ASC
 // before Peek() is applied — order is critical for
@@ -2344,14 +2418,96 @@ DROP TABLE WeeklyMachineTrend;
 
 
 // ============================================================
+// SECTION 36K: KBA MACHINE RESULT — LOOKUP MAPS FOR CurrentPeriod
+// Rolls the KBA file up to one row per machine (attributed rows only:
+// Unattributed rows are excluded). Actual and Expected are additive counts.
+// Excess trips = sum over Board Type + Caliper combos of max(Actual - Expected, 0),
+// so a combo that ran better than expected does not cancel one that ran worse.
+// Exposed to Section 37 as MAPPING tables only (no join, no row multiplication),
+// keyed Plant(4-digit)|WC Object ID. KBA_JobMix is dropped once the maps exist.
+// ============================================================
+
+SET ErrorMode = 0;
+
+KBA_Machine:
+NoConcatenate
+LOAD
+    KBA_Plant & '|' & KBA_WCObjectID                                                               as KBAM_Key,
+    Min(KBA_WeekStart)                                                                             as KBAM_WeekMin,
+    Max(KBA_WeekStart)                                                                             as KBAM_WeekMax,
+    Sum(KBA_IsAttributed)                                                                          as KBAM_AttrRows,
+    Sum(If(KBA_IsAttributed = 1, KBA_FeederActual, 0))                                             as KBAM_Actual,
+    Sum(If(KBA_IsAttributed = 1, KBA_FeederExpected, 0))                                           as KBAM_Expected,
+    Sum(If(KBA_IsAttributed = 1, RangeMax(KBA_FeederActual - KBA_FeederExpected, 0), 0))           as KBAM_Excess,
+    Sum(If(KBA_IsAttributed = 1, KBA_FeederRunHours, 0))                                           as KBAM_RunHours
+RESIDENT KBA_JobMix
+WHERE KBA_InScope = 1 AND Not IsNull(KBA_WCObjectID)
+GROUP BY KBA_Plant & '|' & KBA_WCObjectID;
+
+// One map per KBA_Machine measure: KBA_<name>_Map. If the KBA file did not load (so KBA_Machine does
+// not exist), an empty placeholder map is created instead so Section 37's ApplyMap calls still
+// resolve and every machine simply stays on the legacy KPI.
+FOR EACH vKBA_M IN 'AttrRows', 'WeekMin', 'WeekMax', 'Actual', 'Expected', 'Excess', 'RunHours'
+    IF Alt(NoOfRows('KBA_Machine'), 0) > 0 THEN
+        KBA_$(vKBA_M)_Map:
+        MAPPING LOAD
+            KBAM_Key,
+            KBAM_$(vKBA_M)
+        RESIDENT KBA_Machine;
+    ELSE
+        KBA_$(vKBA_M)_Map:
+        MAPPING LOAD * INLINE [
+            KBAM_Key, KBAM_Value
+            __none__, 0
+        ];
+    END IF
+NEXT vKBA_M
+
+DROP TABLE KBA_Machine;
+DROP TABLE KBA_JobMix;
+
+SET ErrorMode = 1;
+
+
+// ============================================================
 // SECTION 37: CURRENT PERIOD AGGREGATION
 // 1-week actuals + BSP per machine
 // Streak taken from most recent completed week only
 // Coverage and confidence from most recent week
 // ============================================================
 
+// ---- KBA feeder KPI eligibility (preceding loads; adds NEW fields only, no existing field changes) ----
+// Cur_UseKBA = 1 only when ALL hold: machine has attributed rows in the KBA file, the file week equals
+// vLastWeekStart, KBA actual trips > 0 (0 = logging gap -> legacy), expected trips > 0, KBA run hours
+// are within [vKBA_HoursMin, vKBA_HoursMax] x the model run hours, and the machine has a BSP trip time
+// and BSP speed. Every other machine (non-KBA, not in the file, or failing a test) keeps the legacy KPI.
 CurrentPeriod:
 NoConcatenate
+LOAD *,
+    If(Cur_KBA_Status = 'KBA', 1, 0)                                                            as Cur_UseKBA
+;
+LOAD *,
+    If(Cur_KBA_AttrRows = -1, 'not in KBA file',
+      If(Cur_KBA_AttrRows = 0, 'no attributed rows in KBA file',
+        If(Cur_KBA_WeekMin <> $(vLastWeekStart) OR Cur_KBA_WeekMax <> $(vLastWeekStart), 'KBA file week is stale',
+          If(Alt(Cur_KBA_Actual, 0) = 0, 'zero KBA trips - no signal',
+            If(Alt(Cur_KBA_Expected, 0) <= 0, 'no expected trips',
+              If(Alt(Cur_RunHours, 0) <= 0
+                  OR Cur_KBA_RunHours / Cur_RunHours < $(vKBA_HoursMin)
+                  OR Cur_KBA_RunHours / Cur_RunHours > $(vKBA_HoursMax), 'KBA hours do not match model hours',
+                If(Alt(Cur_BSP_FeederTripTime, 0) <= 0 OR Alt(Cur_BSP_Speed, 0) <= 0, 'no BSP trip time or speed',
+                  'KBA'))))))) as Cur_KBA_Status,
+    If(Alt(Cur_RunHours, 0) > 0, Cur_KBA_RunHours / Cur_RunHours, Null())                        as Cur_KBA_HoursRatio
+;
+LOAD *,
+    ApplyMap('KBA_AttrRows_Map', Right('0000' & Trim(Plant), 4) & '|' & [WC Object ID], -1)     as Cur_KBA_AttrRows,
+    ApplyMap('KBA_WeekMin_Map',  Right('0000' & Trim(Plant), 4) & '|' & [WC Object ID], Null()) as Cur_KBA_WeekMin,
+    ApplyMap('KBA_WeekMax_Map',  Right('0000' & Trim(Plant), 4) & '|' & [WC Object ID], Null()) as Cur_KBA_WeekMax,
+    ApplyMap('KBA_Actual_Map',   Right('0000' & Trim(Plant), 4) & '|' & [WC Object ID], Null()) as Cur_KBA_Actual,
+    ApplyMap('KBA_Expected_Map', Right('0000' & Trim(Plant), 4) & '|' & [WC Object ID], Null()) as Cur_KBA_Expected,
+    ApplyMap('KBA_Excess_Map',   Right('0000' & Trim(Plant), 4) & '|' & [WC Object ID], Null()) as Cur_KBA_Excess,
+    ApplyMap('KBA_RunHours_Map', Right('0000' & Trim(Plant), 4) & '|' & [WC Object ID], Null()) as Cur_KBA_RunHours
+;
 LOAD
     Plant,
     "WC Object ID",
@@ -2401,6 +2557,64 @@ WHERE WeekStart >= $(v2WeekStart) AND WeekStart < $(vCurrentWeekStart)
 GROUP BY Plant, "WC Object ID";
 
 DROP TABLE WeeklyMachineBSP;
+
+// ===== KBA-DIAG START =====
+SET ErrorMode = 0;
+
+// ---- how many machines fall into each status ----
+_KBADiag_St:
+NoConcatenate
+LOAD
+    Cur_KBA_Status                                                                                 as _st,
+    Count(1)                                                                                       as _n
+RESIDENT CurrentPeriod
+GROUP BY Cur_KBA_Status;
+
+LET vKBADiag_nS = Alt(NoOfRows('_KBADiag_St'), 0);
+LET vKBADiag_cpN = Alt(NoOfRows('CurrentPeriod'), 0);
+TRACE [KBA-DIAG] 36K CurrentPeriod machines = $(vKBADiag_cpN)   KBA status counts follow;
+FOR vKBADiag_i = 0 TO $(vKBADiag_nS) - 1
+    LET vKBADiag_L = Peek('_st', $(vKBADiag_i), '_KBADiag_St') & '  =  ' & Peek('_n', $(vKBADiag_i), '_KBADiag_St');
+    TRACE [KBA-DIAG] 36K status: $(vKBADiag_L);
+NEXT vKBADiag_i
+
+// ---- every machine that appears in the KBA file, with a preview of the Step 5 numbers ----
+_KBADiag_Cur:
+NoConcatenate
+LOAD
+    Plant & '|' & [WC Object ID]                                                                   as _pw,
+    Cur_KBA_Status                                                                                 as _st,
+    Cur_KBA_Actual                                                                                 as _act,
+    Cur_KBA_Expected                                                                               as _exp,
+    Cur_KBA_Excess                                                                                 as _exc,
+    Cur_KBA_HoursRatio                                                                             as _ratio,
+    Cur_BSP_FeederTripTime                                                                         as _bt,
+    Cur_BSP_Speed                                                                                  as _bs,
+    Cur_BSP_CoveragePct                                                                            as _cov
+RESIDENT CurrentPeriod
+WHERE Cur_KBA_AttrRows >= 0;
+
+LET vKBADiag_nC = Alt(NoOfRows('_KBADiag_Cur'), 0);
+TRACE [KBA-DIAG] 36K machines present in the KBA file and in the model = $(vKBADiag_nC)   (trip time shown in minutes, gap preview = excess x BSP trip time x BSP speed);
+FOR vKBADiag_i = 0 TO $(vKBADiag_nC) - 1
+    LET vKBADiag_pw  = Peek('_pw', $(vKBADiag_i), '_KBADiag_Cur');
+    LET vKBADiag_st  = Peek('_st', $(vKBADiag_i), '_KBADiag_Cur');
+    LET vKBADiag_act = Alt(Peek('_act', $(vKBADiag_i), '_KBADiag_Cur'), 0);
+    LET vKBADiag_exp = Alt(Round(Peek('_exp', $(vKBADiag_i), '_KBADiag_Cur'), 0.1), 0);
+    LET vKBADiag_exc = Alt(Round(Peek('_exc', $(vKBADiag_i), '_KBADiag_Cur'), 0.1), 0);
+    LET vKBADiag_rt  = Alt(Round(Peek('_ratio', $(vKBADiag_i), '_KBADiag_Cur'), 0.01), 0);
+    LET vKBADiag_bt  = Alt(Peek('_bt', $(vKBADiag_i), '_KBADiag_Cur'), 0);
+    LET vKBADiag_bs  = Alt(Peek('_bs', $(vKBADiag_i), '_KBADiag_Cur'), 0);
+    LET vKBADiag_cv  = Alt(Round(Peek('_cov', $(vKBADiag_i), '_KBADiag_Cur'), 0.01), 0);
+    LET vKBADiag_btm = Round($(vKBADiag_bt) * 60, 0.1);
+    LET vKBADiag_gap = Round($(vKBADiag_exc) * $(vKBADiag_bt) * $(vKBADiag_bs), 1);
+    LET vKBADiag_fire = If($(vKBADiag_act) > $(vKBADiag_exp) AND $(vKBADiag_cv) > $(vMinCoverage), 'WOULD FIRE', 'no insight');
+    TRACE [KBA-DIAG] 36K $(vKBADiag_pw)   $(vKBADiag_st)   actual=$(vKBADiag_act)   expected=$(vKBADiag_exp)   excess=$(vKBADiag_exc)   hoursRatio=$(vKBADiag_rt)   BSPtrip=$(vKBADiag_btm) min   BSPspeed=$(vKBADiag_bs)   coverage=$(vKBADiag_cv)   gapPreview=$(vKBADiag_gap) sheets   =>  $(vKBADiag_fire);
+NEXT vKBADiag_i
+
+DROP TABLES _KBADiag_St, _KBADiag_Cur;
+SET ErrorMode = 1;
+// ===== KBA-DIAG END =====
 
 
 // ============================================================
