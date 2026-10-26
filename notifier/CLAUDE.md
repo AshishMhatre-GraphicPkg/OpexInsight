@@ -65,7 +65,7 @@ src/
   feedback.py            # Pure: digest acknowledgement loop — encode_token/parse_token, build_ack_links(),
                           # load_responses(), last_ack_for() → LastAck | None. See "Acknowledgement loop" below.
   actions.py             # Pure: load_action_lookup(), lookup_action() → ActionGuidance (see "Manager digest V2" below)
-  data/Reason_Category_Action_Lookup.xlsx  # Static reference table actions.py loads (shipped as package data) — 8 main-lever rows, Sheetfed Printing only
+  data/Reason_Category_Action_Lookup.xlsx  # Static reference table actions.py loads (shipped as package data) — 9 main-lever rows, Sheetfed Printing only
   renderer.py            # Jinja2 wrappers: render_html/text, render_regional_html/text, render_admin_alert
   mailer.py              # Graph API: _post_with_retry (3 attempts, exp backoff), send_mail, send_admin_alert
   logging_setup.py       # configure() called once at startup
@@ -416,7 +416,7 @@ SECTION_TO_LEVER_KEYWORDS = {
 - **Findings and PM failures are non-fatal** — each catches exceptions, sends an admin alert, and continues the digest without that block. Pattern reuses `send_admin_alert` at `mailer.py:85`.
 - **PM join uses `WC Object ID` only** — Plant is excluded because PMComplianceDump stores it as a short int (`8`) while MachineWeekSummary uses zero-padded strings (`0008`). `WC Object ID` is unique across plants.
 - **PM block placement** — in the V1 manager template (archived), an amber table rendered immediately below the Findings block within each per-machine card, suppressed when `pm_summary is None`. In V2, per-machine PM/findings detail is gone from the manager digest — `pm_summary` / `findings` still populate on every `MachineSummary` (used for the plant-wide maintenance totals and for the Card 3 corroboration note) but are no longer rendered per machine. `regional.py`'s regional digest never rendered per-machine PM detail either way.
-- **KPI value formatting (`_format_kpi_value` in `grouper.py`)** — formats `cur_actual` / `bsp_benchmark` strings at grouping time. Rules in priority order: (1) `_PERCENT_LEVERS` → `XX.XX%`; (2) `_TIME_HOURS_LEVERS` (Avg MR Time, Avg Blanket Wash Time, Avg Feeder Trip Time) → multiply by 60, integer, e.g. `"27 Mins"`; (3) `Speed` → integer with comma separator, e.g. `"45,000"`; (4) default → `XX.XX`. Templates render the pre-formatted strings directly — no unit logic in Jinja2.
+- **KPI value formatting (`_format_kpi_value` in `grouper.py`)** — formats `cur_actual` / `bsp_benchmark` strings at grouping time. Rules in priority order: (1) `_PERCENT_LEVERS` → `XX.XX%`; (2) `_TIME_HOURS_LEVERS` (Avg MR Time, Avg Blanket Wash Time, Avg Feeder Trip Time) → multiply by 60, integer, e.g. `"27 Mins"`; (3) `_TRIP_COUNT_LEVERS` (Feeder Trips vs Expected, raw KBA trip counts) → whole trips, e.g. `"385 trips"` (`"1 trip"` for one); (4) `Speed` → integer with comma separator, e.g. `"45,000"`; (5) default → `XX.XX`. Templates render the pre-formatted strings directly — no unit logic in Jinja2.
 - **Renderer uses a module-level `_env`** — Jinja2 environment is created once at import time.
 - **Admin alerts are best-effort** — `send_admin_alert` swallows exceptions so a broken credential does not mask the original error.
 - **`--dry-run` writes to `out/preview/<email>.html`** (plant) and `out/preview/regional/<email>.html` (regional) — safe to run against production config.
@@ -450,10 +450,11 @@ computes everything; V2 only changes how much of it the template shows.
 - **Card 3 ("Likely Causes and Recommended Actions") comes from `src/actions.py`** —
   `lookup_action(lever.name, department, parent_outcome)` against
   `src/data/Reason_Category_Action_Lookup.xlsx` ("Reason Lookup" sheet). The
-  lookup has one row per **(Department, Lever / Reason)** pair — currently 8
+  lookup has one row per **(Department, Lever / Reason)** pair — currently 9
   rows, all `Department = Sheetfed Printing`, one per main lever (Speed,
   Downtime %, Scrap Loss, Avg MR Time, Avg Blanket Wash Time, Avg Feeder Trip
-  Time, Blanket Washes per 10K, Feeder Trips per 10K). Each row carries up to
+  Time, Blanket Washes per 10K, Feeder Trips per 10K, Feeder Trips vs Expected
+  — the last is the KBA machine-log KPI, see the root `CLAUDE.md`). Each row carries up to
   3 `Common Contributing Factor N` / `Typical Actions N` pairs
   (`ActionGuidance.pairs: list[FactorAction]`); a pair is dropped only when
   both its factor and action are blank (the `Downtime %` row has just

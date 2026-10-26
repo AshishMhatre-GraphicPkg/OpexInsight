@@ -59,10 +59,18 @@ def test_blank_key_falls_back_to_generic():
     assert g.is_generic is True
 
 
-def test_lookup_loads_eight_sheetfed_rows():
+def test_lookup_loads_nine_sheetfed_rows():
     table = actions.load_action_lookup()
-    assert len(table) == 8
+    assert len(table) == 9
     assert all(dept == "sheetfed printing" for dept, _lever in table)
+
+
+def test_feeder_trips_vs_expected_has_three_pairs():
+    g = actions.lookup_action("Feeder Trips vs Expected", "Sheetfed Printing")
+    assert g.is_generic is False
+    assert g.category == "Feeder & Infeed"
+    assert len(g.pairs) == 3
+    assert "toward the expected count" in g.pairs[2].action
 
 
 def test_blank_pairs_are_pruned_but_action_only_pairs_kept():

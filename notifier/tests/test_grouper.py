@@ -237,3 +237,33 @@ def test_overview_maint_missing_wo_present(df):
     digests = group_by_manager(df)
     a = next(d for d in digests if d.manager_email == "manager.a@company.com")
     assert isinstance(a.overview.maint_missing_wo, int)
+
+
+def test_feeder_trips_vs_expected_formats_as_whole_trips():
+    from src.grouper import _format_kpi_value, _streak_direction
+    assert _format_kpi_value("Feeder Trips vs Expected", 385) == "385 trips"
+    assert _format_kpi_value("Feeder Trips vs Expected", 339.4) == "339 trips"
+    assert _format_kpi_value("Feeder Trips vs Expected", 1234.6) == "1,235 trips"
+    assert _format_kpi_value("Feeder Trips vs Expected", 1) == "1 trip"
+    assert _streak_direction("Feeder Trips vs Expected") == "above BSP"
+
+
+def test_feeder_trips_vs_expected_lever_end_to_end(df):
+    import numpy as np
+    d = df.copy()
+    i = d.index[d["Plant - WC"].str.contains("Gluer 01")][0]
+    d.loc[i, "Department"] = "Sheetfed Printing"
+    d.loc[i, "Lever_1_Name"] = "Feeder Trips vs Expected"
+    d.loc[i, "Lever_1_Reasons"] = np.nan
+    d.loc[i, "Lever_1_Cur_Actual"] = 385.0
+    d.loc[i, "Lever_1_BSP_Benchmark"] = 339.4
+    digests = group_by_manager(d)
+    a = next(x for x in digests if x.manager_email == "manager.a@company.com")
+    wc01 = next(m for m in a.machines if "Gluer 01" in m.plant_wc)
+    lvr = wc01.levers[0]
+    assert lvr.name == "Feeder Trips vs Expected"
+    assert lvr.cur_actual == "385 trips"
+    assert lvr.bsp_benchmark == "339 trips"
+    assert lvr.streak_direction == "above BSP"
+    assert lvr.action_is_generic is False
+    assert len(lvr.action_pairs) == 3

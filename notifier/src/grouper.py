@@ -55,9 +55,14 @@ _LOWER_IS_BETTER_LEVERS = {
     "Downtime Reason",
     "Avg Blanket Wash Time", "Avg Feeder Trip Time",
     "Blanket Washes per 10K", "Feeder Trips per 10K",
+    "Feeder Trips vs Expected",
 }
 
 _TIME_HOURS_LEVERS = {"Avg MR Time", "Avg Blanket Wash Time", "Avg Feeder Trip Time"}
+
+# Raw trip counts from the KBA machine log (Cur_Actual = actual trips,
+# BSP_Benchmark = expected trips). Shown as whole trips, e.g. "385 trips".
+_TRIP_COUNT_LEVERS = {"Feeder Trips vs Expected"}
 
 
 def _format_kpi_value(name: str, val) -> str:
@@ -71,6 +76,9 @@ def _format_kpi_value(name: str, val) -> str:
         return f"{v * 100:.2f}%"
     if name in _TIME_HOURS_LEVERS:
         return f"{v * 60:,.0f} Mins"
+    if name in _TRIP_COUNT_LEVERS:
+        n = round(v)
+        return f"{n:,.0f} {'trip' if n == 1 else 'trips'}"
     if name == "Speed":
         return f"{v:,.0f}"
     return f"{v:,.2f}"

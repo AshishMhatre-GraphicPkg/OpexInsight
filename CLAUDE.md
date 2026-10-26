@@ -169,6 +169,22 @@ Reason rows have `Cur_BSP_CoveragePct / Cur_BSP_ConfScore / Cur_BSP_PoolSize / B
 
 ---
 
+## KBA Machine-Log Feeder Trips (scoped KPI swap)
+
+For **KBA presses** (`Manufacturer` matches `*KBA*` / `*Koenig*` AND Department = `Sheetfed Printing`) that have usable rows in `KBA_JobMix_Weekly.csv` (SharePoint `.../Qlikcloud Lookups/KBAlogFile/`, overwritten weekly, one week only, no history), the legacy `Feeder Trips per 10K` insight is replaced by **`Feeder Trips vs Expected`**. Every other machine, department and KPI is unchanged.
+
+- **File grain:** Week + Plant + Work Center + Board Type + Board Caliper (`Grain Level` = `BoardType+Caliper` or `Unattributed`). `Expected Trips = Feeder Rate per Run Hour × Feeder Run Hours`. Plant is matched with the existing `Right('0000' & Trim(Plant), 4)` convention; `Plant|Work Center` → `WC Object ID` via `KBA_WCObj_Map` (built from `WcAttributes.qvd`).
+- **Section 7C** loads the file and flags scope (`KBA_JobMix`, `KBA_Scope_Map`); **Section 36K** rolls it to one row per machine (attributed rows only) and exposes it through `KBA_*_Map` mapping tables (no joins, no row multiplication; placeholder maps are created if the file is missing so the reload never fails).
+- **Section 37** adds new `Cur_KBA_*` fields and `Cur_UseKBA` to `CurrentPeriod` through preceding loads (no existing field changes). `Cur_UseKBA = 1` only when **all** hold: machine has attributed rows in the file; file week = `vLastWeekStart`; KBA actual trips > 0 (0 = logging gap → legacy); expected > 0; `KBA run hours / model Cur_RunHours` within `[vKBA_HoursMin, vKBA_HoursMax]` (0.8–1.2); BSP trip time and BSP speed exist; and `vKBA_Enable = 1`. The first failing test is kept in `Cur_KBA_Status`.
+- **Section 42:** the legacy per-10K block adds `AND Cur_UseKBA = 0`; the new block emits `Feeder Trips vs Expected` (`KPI_Category = 'Lever - Downtime %'`, `Insight_ID` token `FTVSEXP`). `Cur_Actual` / `BSP_Benchmark` are the **raw machine-total actual / expected trip counts**; fires when total actual > total expected and `Cur_BSP_CoveragePct > vMinCoverage`. `Sheet_Gap = Excess Trips × Cur_BSP_FeederTripTime × Cur_BSP_Speed`, where Excess Trips = Σ over Board Type + Caliper combos of `max(Actual − Expected, 0)`. `Streak_4wk = 0` (no history). Total machine loss still comes from the OEE row only.
+- **Unattributed rows are excluded** (they carried ~40% of all trips with near-zero expected). `Avg Feeder Trip Time` (duration) is unchanged for everyone and still uses model downtime events.
+- **`vKBA_Enable`** (Step 1 tab): `1` = swap on; `0` = every machine stays on the legacy logic. Use it for same-day regression comparisons.
+- **Parked:** KBA file Plants 8033 and 8046 do not resolve to any `WcAttributes` Plant|Work Center and fall back to legacy; Delivery trips are not implemented.
+- **Test list:** the fact load's hard-coded WC list (`Match("WC Object ID", ...)`) has the 12 KBA candidate machines added under a `KBA-TEST` comment so the swap can be exercised; review that list with the rest of the filter before production.
+- Notifier side: the lookup workbook has a `Feeder Trips vs Expected` row and `grouper._format_kpi_value` renders it as whole trips (`"385 trips"`).
+
+---
+
 ## Key Design Decisions to Preserve
 
 | Decision | Why it matters |
