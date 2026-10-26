@@ -56,6 +56,9 @@ SET vKBA_Department = Sheetfed Printing;
 // A KBA machine may use the KBA feeder KPI only if KBA attributed run hours / model run hours is in this range
 SET vKBA_HoursMin = 0.8;
 SET vKBA_HoursMax = 1.2;
+// Master switch for the KBA feeder swap: 1 = on, 0 = every machine stays on the legacy logic.
+// Used for the same-day regression comparison (reload once at 0, once at 1).
+SET vKBA_Enable = 1;
 // Helper macros: numeric value or Null for a cell / 1 when a non-blank cell is not numeric
 SET vKBA_Num = If(IsNum($1), $1, Null());
 SET vKBA_NN  = If(Len(Trim($1)) > 0 AND Not IsNum($1), 1, 0);
@@ -64,6 +67,7 @@ SET vKBA_NN  = If(Len(Trim($1)) > 0 AND Not IsNum($1), 1, 0);
 LET vKBADiag_LW = Date($(vLastWeekStart));
 TRACE [KBA-DIAG] Step1: vKBAJobMixPath = $(vKBAJobMixPath);
 TRACE [KBA-DIAG] Step1: vKBA_MfrMatch = $(vKBA_MfrMatch)   vKBA_Department = $(vKBA_Department)   vLastWeekStart = $(vKBADiag_LW);
+TRACE [KBA-DIAG] Step1: vKBA_Enable = $(vKBA_Enable) (1 = KBA swap on, 0 = all machines legacy);
 // ===== KBA-DIAG END =====
 
 
@@ -2484,7 +2488,7 @@ SET ErrorMode = 1;
 CurrentPeriod:
 NoConcatenate
 LOAD *,
-    If(Cur_KBA_Status = 'KBA', 1, 0)                                                            as Cur_UseKBA
+    If(Cur_KBA_Status = 'KBA' AND $(vKBA_Enable) = 1, 1, 0)                                     as Cur_UseKBA
 ;
 LOAD *,
     If(Cur_KBA_AttrRows = -1, 'not in KBA file',
@@ -2560,6 +2564,13 @@ DROP TABLE WeeklyMachineBSP;
 
 // ===== KBA-DIAG START =====
 SET ErrorMode = 0;
+
+// Eligibility per machine, independent of vKBA_Enable, for the end-of-script regression comparison
+KBA_DiagElig_Map:
+MAPPING LOAD
+    Plant & '|' & [WC Object ID],
+    If(Cur_KBA_Status = 'KBA', 1, 0)
+RESIDENT CurrentPeriod;
 
 // ---- how many machines fall into each status ----
 _KBADiag_St:
@@ -4418,6 +4429,208 @@ DROP MAPPING TABLE Lever5_BSP_Map;
 
 STORE MachineWeekSummary INTO [$(vSummaryQVDPath)] (qvd);
 STORE MachineWeekSummary INTO [$(vSummaryCSVPath)] (txt, delimiter is ',');
+
+// ===== KBA-DIAG START =====
+// ---- Step 6: same-day regression comparison ----
+// Each reload stores a snapshot of this week's InsightRecords and MachineWeekSummary tagged with
+// vKBA_Enable (E0 or E1). When the snapshot from the OTHER setting already exists, the two are
+// compared here and the verdict is written to the log. Run order does not matter.
+// Verdict lines to read:
+//   non-KBA machines differing          -> must be 0
+//   KBA machines NOT eligible differing -> must be 0
+//   eligible KBA machines differing     -> the intended swap rows only
+SET ErrorMode = 0;
+
+LET vKBADiag_Tag   = 'E' & $(vKBA_Enable);
+LET vKBADiag_Other = 'E' & (1 - $(vKBA_Enable));
+
+KBA_SnapIR:
+NoConcatenate
+LOAD
+    Insight_ID & '|' & Reasons                                                                     as SnapKey,
+    Plant                                                                                          as SnapPlant,
+    "WC Object ID"                                                                                 as SnapWC,
+    KPI_Name                                                                                       as SnapKPI,
+    Num(Cur_Actual, '0.0000') & '|' & Num(BSP_Benchmark, '0.0000') & '|' & Num(Gap_Pct, '0.0000')
+        & '|' & Num(Sheet_Impact, '0.00') & '|' & Streak_4wk                                       as SnapSig,
+    Insight_Rank                                                                                   as SnapRank
+RESIDENT InsightRecords
+WHERE Period_Start = '$(vPeriodStartStr)';
+
+KBA_SnapMWS:
+NoConcatenate
+LOAD
+    Plant & '|' & [WC Object ID]                                                                   as MwsKey,
+    Plant                                                                                          as MwsPlant,
+    "WC Object ID"                                                                                 as MwsWC,
+    Num(Total_Sheet_Impact, '0.00')
+        & '|' & Lever_1_Name & '|' & Lever_1_Reasons & '|' & Num(Lever_1_Sheets, '0.00')
+        & '|' & Lever_2_Name & '|' & Lever_2_Reasons & '|' & Num(Lever_2_Sheets, '0.00')
+        & '|' & Lever_3_Name & '|' & Lever_3_Reasons & '|' & Num(Lever_3_Sheets, '0.00')
+        & '|' & Lever_4_Name & '|' & Lever_4_Reasons & '|' & Num(Lever_4_Sheets, '0.00')
+        & '|' & Lever_5_Name & '|' & Lever_5_Reasons & '|' & Num(Lever_5_Sheets, '0.00')           as MwsSig
+RESIDENT MachineWeekSummary;
+
+LET vKBADiag_nSnapIR  = Alt(NoOfRows('KBA_SnapIR'), 0);
+LET vKBADiag_nSnapMWS = Alt(NoOfRows('KBA_SnapMWS'), 0);
+TRACE [KBA-DIAG] 6 snapshot $(vKBADiag_Tag) (vKBA_Enable = $(vKBA_Enable)): InsightRecords rows this week = $(vKBADiag_nSnapIR)   MachineWeekSummary rows = $(vKBADiag_nSnapMWS);
+
+STORE KBA_SnapIR  INTO [$(vKBAValDir)KBAV_SnapIR_$(vKBADiag_Tag).qvd]  (qvd);
+STORE KBA_SnapMWS INTO [$(vKBAValDir)KBAV_SnapMWS_$(vKBADiag_Tag).qvd] (qvd);
+
+IF FileSize('$(vKBAValDir)KBAV_SnapIR_$(vKBADiag_Other).qvd') > 0 AND FileSize('$(vKBAValDir)KBAV_SnapMWS_$(vKBADiag_Other).qvd') > 0 THEN
+
+    TRACE [KBA-DIAG] 6 comparing this run $(vKBADiag_Tag) against the stored snapshot $(vKBADiag_Other);
+
+    KBA_OtherIR:
+    NoConcatenate
+    LOAD
+        SnapKey   as OKey,
+        SnapSig   as OSig,
+        SnapRank  as ORank,
+        SnapPlant as OPlant,
+        SnapWC    as OWC,
+        SnapKPI   as OKPI
+    FROM [$(vKBAValDir)KBAV_SnapIR_$(vKBADiag_Other).qvd] (qvd);
+
+    KBA_OtherMWS:
+    NoConcatenate
+    LOAD
+        MwsKey    as OMKey,
+        MwsSig    as OMSig,
+        MwsPlant  as OMPlant,
+        MwsWC     as OMWC
+    FROM [$(vKBAValDir)KBAV_SnapMWS_$(vKBADiag_Other).qvd] (qvd);
+
+    KBA_OSig_Map:   MAPPING LOAD OKey, OSig   RESIDENT KBA_OtherIR;
+    KBA_ORank_Map:  MAPPING LOAD OKey, ORank  RESIDENT KBA_OtherIR;
+    KBA_TSig_Map:   MAPPING LOAD SnapKey, SnapSig RESIDENT KBA_SnapIR;
+    KBA_OMSig_Map:  MAPPING LOAD OMKey, OMSig RESIDENT KBA_OtherMWS;
+    KBA_TMSig_Map:  MAPPING LOAD MwsKey, MwsSig RESIDENT KBA_SnapMWS;
+
+    // ---- InsightRecords: one row per insight in either run ----
+    _KBADiag_CmpIR:
+    NoConcatenate
+    LOAD
+        SnapPlant & '|' & SnapWC                                                                   as _pw,
+        SnapKPI                                                                                    as _kpi,
+        ApplyMap('KBA_Scope_Map', SnapWC, 0)                                                       as _scope,
+        ApplyMap('KBA_DiagElig_Map', SnapPlant & '|' & SnapWC, 0)                                  as _elig,
+        If(ApplyMap('KBA_OSig_Map', SnapKey, '<none>') = '<none>', 'only in this run',
+          If(ApplyMap('KBA_OSig_Map', SnapKey, '<none>') <> SnapSig, 'values differ',
+            If(ApplyMap('KBA_ORank_Map', SnapKey, -1) <> SnapRank, 'rank only', 'same')))          as _st
+    RESIDENT KBA_SnapIR;
+
+    Concatenate (_KBADiag_CmpIR)
+    LOAD
+        OPlant & '|' & OWC                                                                         as _pw,
+        OKPI                                                                                       as _kpi,
+        ApplyMap('KBA_Scope_Map', OWC, 0)                                                          as _scope,
+        ApplyMap('KBA_DiagElig_Map', OPlant & '|' & OWC, 0)                                        as _elig,
+        'only in other run'                                                                        as _st
+    RESIDENT KBA_OtherIR
+    WHERE ApplyMap('KBA_TSig_Map', OKey, '<none>') = '<none>';
+
+    _KBADiag_AggIR:
+    NoConcatenate
+    LOAD
+        Count(1)                                                                                   as _n,
+        Sum(If(_st = 'same', 1, 0))                                                                as _same,
+        Sum(If(_st = 'rank only', 1, 0))                                                           as _rank,
+        Sum(If(Match(_st, 'values differ', 'only in this run', 'only in other run') > 0, 1, 0))    as _diff,
+        Sum(If(_scope = 0 AND Match(_st, 'values differ', 'only in this run', 'only in other run') > 0, 1, 0))              as _badNon,
+        Sum(If(_scope = 1 AND _elig = 0 AND Match(_st, 'values differ', 'only in this run', 'only in other run') > 0, 1, 0)) as _badLegacy,
+        Sum(If(_elig = 1 AND Match(_st, 'values differ', 'only in this run', 'only in other run') > 0, 1, 0))               as _intended
+    RESIDENT _KBADiag_CmpIR;
+
+    LET vKBADiag_n1  = Alt(Peek('_n',         0, '_KBADiag_AggIR'), 0);
+    LET vKBADiag_s1  = Alt(Peek('_same',      0, '_KBADiag_AggIR'), 0);
+    LET vKBADiag_r1  = Alt(Peek('_rank',      0, '_KBADiag_AggIR'), 0);
+    LET vKBADiag_d1  = Alt(Peek('_diff',      0, '_KBADiag_AggIR'), 0);
+    LET vKBADiag_b1  = Alt(Peek('_badNon',    0, '_KBADiag_AggIR'), 0);
+    LET vKBADiag_l1  = Alt(Peek('_badLegacy', 0, '_KBADiag_AggIR'), 0);
+    LET vKBADiag_i1  = Alt(Peek('_intended',  0, '_KBADiag_AggIR'), 0);
+    TRACE [KBA-DIAG] 6 InsightRecords: total rows compared = $(vKBADiag_n1)   identical = $(vKBADiag_s1)   rank-only changes = $(vKBADiag_r1)   differing = $(vKBADiag_d1);
+    TRACE [KBA-DIAG] 6 InsightRecords: non-KBA machine rows differing = $(vKBADiag_b1) (must be 0)   KBA machines not eligible differing = $(vKBADiag_l1) (must be 0)   eligible KBA machine rows differing = $(vKBADiag_i1) (intended);
+
+    _KBADiag_ListIR:
+    NoConcatenate
+    LOAD _pw, _kpi, _st, _scope, _elig
+    RESIDENT _KBADiag_CmpIR
+    WHERE Match(_st, 'values differ', 'only in this run', 'only in other run') > 0;
+
+    LET vKBADiag_nL1 = Alt(NoOfRows('_KBADiag_ListIR'), 0);
+    LET vKBADiag_lim1 = RangeMin($(vKBADiag_nL1), 60);
+    TRACE [KBA-DIAG] 6 differing InsightRecords rows = $(vKBADiag_nL1) (first $(vKBADiag_lim1) shown);
+    FOR vKBADiag_i = 0 TO $(vKBADiag_lim1) - 1
+        LET vKBADiag_L = Peek('_pw', $(vKBADiag_i), '_KBADiag_ListIR') & '   ' & Peek('_kpi', $(vKBADiag_i), '_KBADiag_ListIR') & '   ' & Peek('_st', $(vKBADiag_i), '_KBADiag_ListIR') & '   KBAscope=' & Peek('_scope', $(vKBADiag_i), '_KBADiag_ListIR') & ' eligible=' & Peek('_elig', $(vKBADiag_i), '_KBADiag_ListIR');
+        TRACE [KBA-DIAG] 6   IR diff: $(vKBADiag_L);
+    NEXT vKBADiag_i
+
+    // ---- MachineWeekSummary: one row per machine in either run ----
+    _KBADiag_CmpMWS:
+    NoConcatenate
+    LOAD
+        MwsPlant & '|' & MwsWC                                                                     as _pw,
+        ApplyMap('KBA_Scope_Map', MwsWC, 0)                                                        as _scope,
+        ApplyMap('KBA_DiagElig_Map', MwsPlant & '|' & MwsWC, 0)                                    as _elig,
+        If(ApplyMap('KBA_OMSig_Map', MwsKey, '<none>') = '<none>', 'only in this run',
+          If(ApplyMap('KBA_OMSig_Map', MwsKey, '<none>') <> MwsSig, 'values differ', 'same'))       as _st
+    RESIDENT KBA_SnapMWS;
+
+    Concatenate (_KBADiag_CmpMWS)
+    LOAD
+        OMPlant & '|' & OMWC                                                                       as _pw,
+        ApplyMap('KBA_Scope_Map', OMWC, 0)                                                         as _scope,
+        ApplyMap('KBA_DiagElig_Map', OMPlant & '|' & OMWC, 0)                                      as _elig,
+        'only in other run'                                                                        as _st
+    RESIDENT KBA_OtherMWS
+    WHERE ApplyMap('KBA_TMSig_Map', OMKey, '<none>') = '<none>';
+
+    _KBADiag_AggMWS:
+    NoConcatenate
+    LOAD
+        Count(1)                                                                                   as _n,
+        Sum(If(_st = 'same', 1, 0))                                                                as _same,
+        Sum(If(_st <> 'same', 1, 0))                                                               as _diff,
+        Sum(If(_scope = 0 AND _st <> 'same', 1, 0))                                                as _badNon,
+        Sum(If(_scope = 1 AND _elig = 0 AND _st <> 'same', 1, 0))                                  as _badLegacy,
+        Sum(If(_elig = 1 AND _st <> 'same', 1, 0))                                                 as _intended
+    RESIDENT _KBADiag_CmpMWS;
+
+    LET vKBADiag_n2 = Alt(Peek('_n',         0, '_KBADiag_AggMWS'), 0);
+    LET vKBADiag_s2 = Alt(Peek('_same',      0, '_KBADiag_AggMWS'), 0);
+    LET vKBADiag_d2 = Alt(Peek('_diff',      0, '_KBADiag_AggMWS'), 0);
+    LET vKBADiag_b2 = Alt(Peek('_badNon',    0, '_KBADiag_AggMWS'), 0);
+    LET vKBADiag_l2 = Alt(Peek('_badLegacy', 0, '_KBADiag_AggMWS'), 0);
+    LET vKBADiag_i2 = Alt(Peek('_intended',  0, '_KBADiag_AggMWS'), 0);
+    TRACE [KBA-DIAG] 6 MachineWeekSummary: machines compared = $(vKBADiag_n2)   identical = $(vKBADiag_s2)   differing = $(vKBADiag_d2);
+    TRACE [KBA-DIAG] 6 MachineWeekSummary: non-KBA machines differing = $(vKBADiag_b2) (must be 0)   KBA machines not eligible differing = $(vKBADiag_l2) (must be 0)   eligible KBA machines differing = $(vKBADiag_i2) (intended);
+
+    _KBADiag_ListMWS:
+    NoConcatenate
+    LOAD _pw, _st, _scope, _elig
+    RESIDENT _KBADiag_CmpMWS
+    WHERE _st <> 'same';
+
+    LET vKBADiag_nL2 = Alt(NoOfRows('_KBADiag_ListMWS'), 0);
+    LET vKBADiag_lim2 = RangeMin($(vKBADiag_nL2), 60);
+    TRACE [KBA-DIAG] 6 differing MachineWeekSummary machines = $(vKBADiag_nL2) (first $(vKBADiag_lim2) shown);
+    FOR vKBADiag_i = 0 TO $(vKBADiag_lim2) - 1
+        LET vKBADiag_L = Peek('_pw', $(vKBADiag_i), '_KBADiag_ListMWS') & '   ' & Peek('_st', $(vKBADiag_i), '_KBADiag_ListMWS') & '   KBAscope=' & Peek('_scope', $(vKBADiag_i), '_KBADiag_ListMWS') & ' eligible=' & Peek('_elig', $(vKBADiag_i), '_KBADiag_ListMWS');
+        TRACE [KBA-DIAG] 6   MWS diff: $(vKBADiag_L);
+    NEXT vKBADiag_i
+
+    DROP TABLES KBA_OtherIR, KBA_OtherMWS, _KBADiag_CmpIR, _KBADiag_AggIR, _KBADiag_ListIR, _KBADiag_CmpMWS, _KBADiag_AggMWS, _KBADiag_ListMWS;
+
+ELSE
+    LET vKBADiag_OtherEn = 1 - $(vKBA_Enable);
+    TRACE [KBA-DIAG] 6 no stored snapshot for $(vKBADiag_Other) yet: reload once more with vKBA_Enable = $(vKBADiag_OtherEn) to get the comparison;
+END IF
+
+DROP TABLES KBA_SnapIR, KBA_SnapMWS;
+SET ErrorMode = 1;
+// ===== KBA-DIAG END =====
 
 DROP TABLE MachineWeekSummary;
 
