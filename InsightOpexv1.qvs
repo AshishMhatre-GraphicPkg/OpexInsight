@@ -3297,6 +3297,45 @@ LOAD
 RESIDENT CurrentPeriod
 WHERE Not IsNull(Cur_BSP_FeederTripPer10K) AND Not IsNull(Cur_FeederTripPer10K)
     AND Cur_FeederTripPer10K > Cur_BSP_FeederTripPer10K
+    AND Cur_BSP_CoveragePct > $(vMinCoverage)
+    // KBA machines that pass every eligibility test use 'Feeder Trips vs Expected' (below) instead.
+    // Cur_UseKBA is 0 for every other machine, so their output is unchanged.
+    AND Cur_UseKBA = 0;
+
+// ---- Feeder Trips vs Expected — KBA machines only (Cur_UseKBA = 1) ----
+// Cur_Actual / BSP_Benchmark are the machine's raw Actual and Expected trip counts from the KBA
+// machine log (attributed Board Type + Caliper rows only). Fires when total Actual > total Expected.
+// Sheet_Gap uses the per-combo Excess Trips (a combo that ran better than expected does not cancel
+// one that ran worse) x BSP trip time (hours per trip) x BSP speed (sheets per hour).
+// Streak_4wk = 0: the KBA file holds one week only, so there is no history to compute a streak from.
+Concatenate (InsightRecords_Raw)
+LOAD
+    Plant & '|' & [WC Object ID] & '|' & Date($(v2WeekStart), 'YYYY-MM-DD') & '|FTVSEXP'        as Insight_ID,
+    Plant,
+    "WC Object ID",
+    ApplyMap('PlantWC_IR_Map', "WC Object ID", 'Unknown')                                       as "Plant - WC",
+    ApplyMap('Department_IR_Map', "WC Object ID", 'Unknown')                                    as Department,
+    Date($(v2WeekStart), 'YYYY-MM-DD')                                                          as Period_Start,
+    'Feeder Trips vs Expected'                                                                  as KPI_Name,
+    'Lever - Downtime %'                                                                        as KPI_Category,
+    Cur_KBA_Actual                                                                              as Cur_Actual,
+    Cur_KBA_Expected                                                                            as BSP_Benchmark,
+    Cur_KBA_Actual                                                                              as Cur_Actual_Fmt,
+    Cur_KBA_Expected                                                                            as BSP_Benchmark_Fmt,
+    If(Cur_KBA_Expected > 0, (Cur_KBA_Actual - Cur_KBA_Expected) / Cur_KBA_Expected * 100, 0)   as Gap_Pct,
+    Cur_KBA_Excess * Cur_BSP_FeederTripTime * Cur_BSP_Speed                                     as Sheet_Gap,
+    0                                                                                           as Streak_4wk,
+    Cur_SchedHours,
+    Cur_BSP_CoveragePct,
+    Cur_BSP_ConfScore,
+    Cur_BSP_PoolSize,
+    If(Cur_BSP_ConfScore >= 2.5, 'HIGH',
+        If(Cur_BSP_ConfScore >= 1.5, 'MEDIUM',
+            If(Cur_BSP_ConfScore >= 0.5, 'LOW',
+                'Insufficient History')))                                                        as BSP_Confidence
+RESIDENT CurrentPeriod
+WHERE Cur_UseKBA = 1
+    AND Cur_KBA_Actual > Cur_KBA_Expected
     AND Cur_BSP_CoveragePct > $(vMinCoverage);
 
 Mach_BSPSpeed_Map:
@@ -3304,6 +3343,76 @@ MAPPING LOAD
     Plant & '|' & [WC Object ID],
     Cur_BSP_Speed
 RESIDENT CurrentPeriod;
+
+// ===== KBA-DIAG START =====
+SET ErrorMode = 0;
+
+// ---- Step 5: feeder-frequency rows by KPI after the swap ----
+_KBADiag_FT:
+NoConcatenate
+LOAD
+    KPI_Name                                                                                       as _k,
+    Count(1)                                                                                       as _n,
+    Sum(Sheet_Gap)                                                                                 as _g
+RESIDENT InsightRecords_Raw
+WHERE Match(KPI_Name, 'Feeder Trips per 10K', 'Feeder Trips vs Expected')
+GROUP BY KPI_Name;
+
+LET vKBADiag_nK = Alt(NoOfRows('_KBADiag_FT'), 0);
+TRACE [KBA-DIAG] 42 feeder-frequency rows in InsightRecords_Raw (KPI_Name = rows, total sheet gap);
+FOR vKBADiag_i = 0 TO $(vKBADiag_nK) - 1
+    LET vKBADiag_L = Peek('_k', $(vKBADiag_i), '_KBADiag_FT') & ' = ' & Peek('_n', $(vKBADiag_i), '_KBADiag_FT') & ' rows   sheet gap = ' & Round(Peek('_g', $(vKBADiag_i), '_KBADiag_FT'), 1);
+    TRACE [KBA-DIAG] 42   $(vKBADiag_L);
+NEXT vKBADiag_i
+
+// ---- every new KBA row ----
+_KBADiag_New:
+NoConcatenate
+LOAD
+    Plant & '|' & [WC Object ID]                                                                   as _pw,
+    Cur_Actual                                                                                     as _a,
+    BSP_Benchmark                                                                                  as _e,
+    Gap_Pct                                                                                        as _gp,
+    Sheet_Gap                                                                                      as _sg
+RESIDENT InsightRecords_Raw
+WHERE KPI_Name = 'Feeder Trips vs Expected';
+
+LET vKBADiag_nN = Alt(NoOfRows('_KBADiag_New'), 0);
+TRACE [KBA-DIAG] 42 new Feeder Trips vs Expected rows = $(vKBADiag_nN);
+FOR vKBADiag_i = 0 TO $(vKBADiag_nN) - 1
+    LET vKBADiag_pw = Peek('_pw', $(vKBADiag_i), '_KBADiag_New');
+    LET vKBADiag_a  = Alt(Peek('_a',  $(vKBADiag_i), '_KBADiag_New'), 0);
+    LET vKBADiag_e  = Alt(Round(Peek('_e',  $(vKBADiag_i), '_KBADiag_New'), 0.1), 0);
+    LET vKBADiag_gp = Alt(Round(Peek('_gp', $(vKBADiag_i), '_KBADiag_New'), 0.1), 0);
+    LET vKBADiag_sg = Alt(Round(Peek('_sg', $(vKBADiag_i), '_KBADiag_New'), 1), 0);
+    TRACE [KBA-DIAG] 42   $(vKBADiag_pw)   actual=$(vKBADiag_a)   expected=$(vKBADiag_e)   gap=$(vKBADiag_gp) pct   sheetGap=$(vKBADiag_sg);
+NEXT vKBADiag_i
+
+// ---- legacy rows that this swap suppressed (KBA machines that would have fired before) ----
+_KBADiag_Sup:
+NoConcatenate
+LOAD
+    Plant & '|' & [WC Object ID]                                                                   as _pw,
+    Cur_FeederTripPer10K                                                                           as _a,
+    Cur_BSP_FeederTripPer10K                                                                       as _b
+RESIDENT CurrentPeriod
+WHERE Cur_UseKBA = 1
+  AND Not IsNull(Cur_BSP_FeederTripPer10K) AND Not IsNull(Cur_FeederTripPer10K)
+  AND Cur_FeederTripPer10K > Cur_BSP_FeederTripPer10K
+  AND Cur_BSP_CoveragePct > $(vMinCoverage);
+
+LET vKBADiag_nSup = Alt(NoOfRows('_KBADiag_Sup'), 0);
+TRACE [KBA-DIAG] 42 legacy Feeder Trips per 10K rows suppressed for KBA machines = $(vKBADiag_nSup);
+FOR vKBADiag_i = 0 TO $(vKBADiag_nSup) - 1
+    LET vKBADiag_pw = Peek('_pw', $(vKBADiag_i), '_KBADiag_Sup');
+    LET vKBADiag_a  = Alt(Round(Peek('_a', $(vKBADiag_i), '_KBADiag_Sup'), 0.01), 0);
+    LET vKBADiag_b  = Alt(Round(Peek('_b', $(vKBADiag_i), '_KBADiag_Sup'), 0.01), 0);
+    TRACE [KBA-DIAG] 42   suppressed legacy row: $(vKBADiag_pw)   per10K actual=$(vKBADiag_a)   BSP=$(vKBADiag_b);
+NEXT vKBADiag_i
+
+DROP TABLES _KBADiag_FT, _KBADiag_New, _KBADiag_Sup;
+SET ErrorMode = 1;
+// ===== KBA-DIAG END =====
 
 DROP TABLE CurrentPeriod;
 
